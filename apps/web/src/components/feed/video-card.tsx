@@ -1,0 +1,179 @@
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import type { FeedClip } from "@/actions/clips";
+import { VideoPlayer } from "@/components/clip/video-player";
+import { BettingBottomSheet } from "@/components/betting/betting-bottom-sheet";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { cn, formatCompactNumber } from "@/lib/utils";
+import {
+  ChevronUp,
+  MessageSquare,
+  Eye,
+  TrendingUp,
+  GitBranch,
+  Timer,
+} from "lucide-react";
+
+interface VideoCardProps {
+  clip: FeedClip;
+  isActive: boolean;
+}
+
+export function VideoCard({ clip, isActive }: VideoCardProps) {
+  const [showBetting, setShowBetting] = useState(false);
+  const isBettingOpen = clip.status === "betting_open";
+  const deadline = clip.betting_deadline
+    ? new Date(clip.betting_deadline)
+    : null;
+  const isExpired = deadline ? deadline < new Date() : false;
+
+  return (
+    <div className="relative h-full w-full snap-start">
+      <VideoPlayer
+        src={clip.video_storage_path}
+        poster={clip.poster_storage_path}
+        pauseStartMs={clip.pause_start_ms}
+        durationMs={clip.duration_ms}
+        isActive={isActive}
+      />
+
+      {/* Gradient overlay at bottom */}
+      <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-48 bg-gradient-to-t from-black/80 to-transparent" />
+
+      {/* Left side info */}
+      <div className="absolute bottom-20 left-4 right-20 space-y-2">
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/profile/${clip.creator_username}`}
+            className="flex items-center gap-2"
+          >
+            <div className="h-8 w-8 rounded-full bg-primary/20 ring-2 ring-primary/50 flex items-center justify-center text-xs font-bold text-primary">
+              {clip.creator_display_name[0]?.toUpperCase()}
+            </div>
+            <span className="text-sm font-semibold text-white">
+              @{clip.creator_username}
+            </span>
+          </Link>
+        </div>
+
+        <h3 className="text-sm font-medium text-white/90 line-clamp-2">
+          {clip.story_title}
+        </h3>
+
+        {clip.scene_summary && (
+          <p className="text-xs text-white/60 line-clamp-1">
+            {clip.scene_summary}
+          </p>
+        )}
+
+        <div className="flex items-center gap-2">
+          {clip.genre && (
+            <Badge variant="secondary" className="text-[10px]">
+              {clip.genre}
+            </Badge>
+          )}
+          {clip.depth > 0 && (
+            <Badge variant="outline" className="gap-1 text-[10px]">
+              <GitBranch className="h-2.5 w-2.5" />
+              Depth {clip.depth}
+            </Badge>
+          )}
+        </div>
+      </div>
+
+      {/* Right side actions */}
+      <div className="absolute bottom-24 right-3 flex flex-col items-center gap-5">
+        <div className="flex flex-col items-center gap-1">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm">
+            <Eye className="h-5 w-5 text-white" />
+          </div>
+          <span className="text-[10px] text-white/80">
+            {formatCompactNumber(clip.view_count)}
+          </span>
+        </div>
+
+        <div className="flex flex-col items-center gap-1">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm">
+            <TrendingUp className="h-5 w-5 text-white" />
+          </div>
+          <span className="text-[10px] text-white/80">
+            {formatCompactNumber(clip.bet_count)}
+          </span>
+        </div>
+
+        <div className="flex flex-col items-center gap-1">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm">
+            <MessageSquare className="h-5 w-5 text-white" />
+          </div>
+        </div>
+      </div>
+
+      {/* Betting CTA */}
+      {isBettingOpen && !isExpired && (
+        <div className="absolute bottom-2 left-4 right-4">
+          <Button
+            onClick={() => setShowBetting(true)}
+            className="w-full gap-2 rounded-xl bg-primary/90 backdrop-blur-sm"
+            size="lg"
+          >
+            <ChevronUp className="h-4 w-4" />
+            Predict what happens next
+            {deadline && (
+              <CountdownBadge deadline={deadline} />
+            )}
+          </Button>
+        </div>
+      )}
+
+      {clip.status === "settled" && (
+        <div className="absolute bottom-2 left-4 right-4">
+          <Link href={`/clip/${clip.id}`}>
+            <Button
+              variant="secondary"
+              className="w-full gap-2 rounded-xl backdrop-blur-sm"
+              size="lg"
+            >
+              View Results
+            </Button>
+          </Link>
+        </div>
+      )}
+
+      <BettingBottomSheet
+        clipId={clip.id}
+        open={showBetting}
+        onOpenChange={setShowBetting}
+      />
+    </div>
+  );
+}
+
+function CountdownBadge({ deadline }: { deadline: Date }) {
+  const [timeLeft, setTimeLeft] = useState("");
+
+  useState(() => {
+    const update = () => {
+      const diff = deadline.getTime() - Date.now();
+      if (diff <= 0) {
+        setTimeLeft("0:00");
+        return;
+      }
+      const minutes = Math.floor(diff / 60000);
+      const seconds = Math.floor((diff % 60000) / 1000);
+      setTimeLeft(`${minutes}:${seconds.toString().padStart(2, "0")}`);
+    };
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  });
+
+  return (
+    <span className="ml-1 flex items-center gap-1 rounded-full bg-black/30 px-2 py-0.5 text-xs">
+      <Timer className="h-3 w-3" />
+      {timeLeft}
+    </span>
+  );
+}
