@@ -12,6 +12,10 @@ interface VideoPlayerProps {
   durationMs?: number | null;
   isActive?: boolean;
   className?: string;
+  /** Called at end of each loop (at pause point or video end) */
+  onLoopEnd?: () => void;
+  /** When true, video stays paused (e.g. while loop overlay is shown) */
+  pausedByParent?: boolean;
 }
 
 export function VideoPlayer({
@@ -20,8 +24,12 @@ export function VideoPlayer({
   pauseStartMs,
   isActive = true,
   className,
+  onLoopEnd,
+  pausedByParent = false,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const loopEndCalledRef = useRef(false);
+  const prevTimeRef = useRef(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [showControls, setShowControls] = useState(false);
@@ -32,6 +40,11 @@ export function VideoPlayer({
     const video = videoRef.current;
     if (!video) return;
 
+    if (pausedByParent) {
+      video.pause();
+      setIsPlaying(false);
+      return;
+    }
     if (isActive) {
       video.play().catch(() => {});
       setIsPlaying(true);
@@ -40,7 +53,7 @@ export function VideoPlayer({
       video.currentTime = 0;
       setIsPlaying(false);
     }
-  }, [isActive]);
+  }, [isActive, pausedByParent]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -52,13 +65,32 @@ export function VideoPlayer({
     const video = videoRef.current;
     if (!video) return;
 
-    const pct = (video.currentTime / video.duration) * 100;
+    const t = video.currentTime;
+    const prev = prevTimeRef.current;
+    prevTimeRef.current = t;
+
+    const pct = (t / video.duration) * 100;
     setProgress(isNaN(pct) ? 0 : pct);
 
-    if (pauseStartMs && video.currentTime * 1000 >= pauseStartMs) {
+    const atPausePoint = pauseStartMs && t * 1000 >= pauseStartMs;
+    const atVideoEnd = !pauseStartMs && video.duration > 0 && t >= video.duration - 0.25;
+    const justLooped = !pauseStartMs && prev > 1 && t < 0.5;
+
+    if (atPausePoint) {
+      if (!loopEndCalledRef.current) {
+        loopEndCalledRef.current = true;
+        onLoopEnd?.();
+      }
       video.currentTime = 0;
+    } else if (atVideoEnd || justLooped) {
+      if (!loopEndCalledRef.current) {
+        loopEndCalledRef.current = true;
+        onLoopEnd?.();
+      }
+    } else if (t < 0.5) {
+      loopEndCalledRef.current = false;
     }
-  }, [pauseStartMs]);
+  }, [pauseStartMs, onLoopEnd]);
 
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
@@ -73,9 +105,18 @@ export function VideoPlayer({
     }
   }, []);
 
+  // Supabase storage path → full public URL (avoids 404 from relative /clips/... on same origin)
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const toStorageUrl = (path: string | null | undefined) => {
+    if (!path) return undefined;
+    if (path.startsWith("http")) return path;
+    return `${supabaseUrl}/storage/v1/object/public/media/${path.replace(/^\//, "")}`;
+  };
+  const fullSrc = toStorageUrl(src);
   const demoSrc =
-    src ||
+    fullSrc ||
     "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
+  const posterUrl = toStorageUrl(poster) ?? undefined;
 
   return (
     <div
@@ -85,7 +126,7 @@ export function VideoPlayer({
       <video
         ref={videoRef}
         src={demoSrc}
-        poster={poster || undefined}
+        poster={posterUrl}
         loop
         playsInline
         muted={isMuted}

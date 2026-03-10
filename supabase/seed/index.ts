@@ -82,7 +82,7 @@ async function seed() {
         pause_start_ms: 12000,
         published_at: new Date().toISOString(),
         betting_deadline: new Date(
-          Date.now() + 30 * 60 * 1000
+          Date.now() + 72 * 60 * 60 * 1000
         ).toISOString(),
       })
       .select()

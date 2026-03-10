@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { placeBet } from "@/actions/bets";
 import { useUserStore } from "@/stores/user-store";
+import { useFeedStore } from "@/stores/feed-store";
 import { useToast } from "@/components/ui/toast";
 import { formatCurrency } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -31,6 +32,7 @@ export function BetForm({
   const [loading, setLoading] = useState(false);
   const wallet = useUserStore((s) => s.wallet);
   const setWallet = useUserStore((s) => s.setWallet);
+  const setLastStakeAmount = useFeedStore((s) => s.setLastStakeAmount);
   const { toast } = useToast();
 
   const numAmount = parseFloat(amount) || 0;
@@ -42,19 +44,50 @@ export function BetForm({
     if (numAmount <= 0) return;
     setLoading(true);
 
-    const result = await placeBet({
+    const payload = {
       prediction_market_id: marketId,
       side_key: side,
       stake_amount: numAmount,
-    });
+    };
+    let result: Awaited<ReturnType<typeof placeBet>>;
+    try {
+      result = await placeBet(payload);
+    } catch (err) {
+      const isAbort =
+        err instanceof Error &&
+        (err.name === "AbortError" || err.message?.includes("Lock broken"));
+      if (isAbort) {
+        await new Promise((r) => setTimeout(r, 400));
+        try {
+          result = await placeBet(payload);
+        } catch {
+          toast({
+            title: "Bet failed",
+            description: "Connection conflict. Try again.",
+            variant: "destructive",
+          });
+          setLoading(false);
+          return;
+        }
+      } else {
+        toast({
+          title: "Bet failed",
+          description: err instanceof Error ? err.message : "Something went wrong",
+          variant: "destructive",
+        });
+        setLoading(false);
+        return;
+      }
+    }
 
-    if (result.error) {
+    if (result!.error) {
       toast({
         title: "Bet failed",
-        description: result.error,
+        description: result!.error,
         variant: "destructive",
       });
     } else {
+      setLastStakeAmount(numAmount);
       toast({
         title: "Bet placed!",
         description: `${formatCurrency(numAmount)} on ${side.toUpperCase()} at ${odds.toFixed(2)}x`,

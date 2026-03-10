@@ -47,16 +47,13 @@ export default function EditProfilePage() {
   }, [profile, reset]);
 
   async function onSubmit(values: FormValues) {
-    const supabase = createBrowserClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
+    const userId = profile?.id;
+    if (!userId) {
       toast({ title: "Not authenticated", variant: "destructive" });
       return;
     }
 
+    const supabase = createBrowserClient();
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -64,7 +61,7 @@ export default function EditProfilePage() {
         bio: values.bio || null,
         country_code: values.country_code || null,
       })
-      .eq("id", user.id);
+      .eq("id", userId);
 
     if (error) {
       toast({ title: "Update failed", description: error.message, variant: "destructive" });

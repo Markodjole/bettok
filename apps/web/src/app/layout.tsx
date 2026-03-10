@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   title: "BetTok — Watch. Predict. Win.",
   description:
     "A mobile-first short-video prediction betting platform. Watch clips, predict what happens next, and win.",
-  manifest: "/manifest.json",
+  manifest: "/manifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -31,7 +31,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" data-scroll-behavior="smooth">
       <body className={inter.className}>
         <Providers>{children}</Providers>
       </body>

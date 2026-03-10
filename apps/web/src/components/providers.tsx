@@ -2,7 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { createBrowserClient } from "@/lib/supabase/client";
+import { createBrowserClient, getUserQueued } from "@/lib/supabase/client";
 import { useUserStore } from "@/stores/user-store";
 import { ToastProvider } from "@/components/ui/toast";
 
@@ -17,7 +17,7 @@ function AuthSync() {
     async function loadUser() {
       const {
         data: { user },
-      } = await supabase.auth.getUser();
+      } = await getUserQueued();
 
       if (!user) {
         setLoading(false);
@@ -57,8 +57,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 30_000,
+            staleTime: 90_000,
             retry: 1,
+            refetchOnWindowFocus: false,
           },
         },
       })

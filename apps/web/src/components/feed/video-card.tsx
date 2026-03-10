@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import type { FeedClip } from "@/actions/clips";
 import { VideoPlayer } from "@/components/clip/video-player";
 import { BettingBottomSheet } from "@/components/betting/betting-bottom-sheet";
+import { LoopBetOverlay } from "@/components/feed/loop-bet-overlay";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn, formatCompactNumber } from "@/lib/utils";
+import { formatCompactNumber } from "@/lib/utils";
 import {
   ChevronUp,
   MessageSquare,
@@ -24,11 +25,16 @@ interface VideoCardProps {
 
 export function VideoCard({ clip, isActive }: VideoCardProps) {
   const [showBetting, setShowBetting] = useState(false);
+  const [showLoopOverlay, setShowLoopOverlay] = useState(false);
   const isBettingOpen = clip.status === "betting_open";
   const deadline = clip.betting_deadline
     ? new Date(clip.betting_deadline)
     : null;
   const isExpired = deadline ? deadline < new Date() : false;
+
+  const handleLoopEnd = useCallback(() => {
+    if (isBettingOpen && !isExpired) setShowLoopOverlay(true);
+  }, [isBettingOpen, isExpired]);
 
   return (
     <div className="relative h-full w-full snap-start">
@@ -38,7 +44,13 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
         pauseStartMs={clip.pause_start_ms}
         durationMs={clip.duration_ms}
         isActive={isActive}
+        onLoopEnd={handleLoopEnd}
       />
+
+      {/* After first loop: semi-transparent overlay with predictions + one-tap bet; video keeps playing */}
+      {showLoopOverlay && isBettingOpen && !isExpired && (
+        <LoopBetOverlay clipId={clip.id} />
+      )}
 
       {/* Gradient overlay at bottom */}
       <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-48 bg-gradient-to-t from-black/80 to-transparent" />
@@ -84,36 +96,50 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
         </div>
       </div>
 
-      {/* Right side actions */}
-      <div className="absolute bottom-24 right-3 flex flex-col items-center gap-5">
-        <div className="flex flex-col items-center gap-1">
+      {/* Right side actions — tap to open predictions / bet */}
+      <div className="absolute bottom-24 right-3 flex flex-col items-center gap-5 z-10">
+        <button
+          type="button"
+          className="flex flex-col items-center gap-1 touch-manipulation"
+          aria-label="View count"
+        >
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm">
             <Eye className="h-5 w-5 text-white" />
           </div>
           <span className="text-[10px] text-white/80">
             {formatCompactNumber(clip.view_count)}
           </span>
-        </div>
+        </button>
 
-        <div className="flex flex-col items-center gap-1">
+        <button
+          type="button"
+          onClick={() => setShowBetting(true)}
+          className="flex flex-col items-center gap-1 touch-manipulation"
+          aria-label="See predictions and bet"
+        >
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm">
             <TrendingUp className="h-5 w-5 text-white" />
           </div>
           <span className="text-[10px] text-white/80">
             {formatCompactNumber(clip.bet_count)}
           </span>
-        </div>
+        </button>
 
-        <div className="flex flex-col items-center gap-1">
+        <button
+          type="button"
+          onClick={() => setShowBetting(true)}
+          className="flex flex-col items-center gap-1 touch-manipulation"
+          aria-label="Predictions"
+        >
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm">
             <MessageSquare className="h-5 w-5 text-white" />
           </div>
-        </div>
+        </button>
       </div>
 
       {/* Betting CTA */}
       {isBettingOpen && !isExpired && (
-        <div className="absolute bottom-2 left-4 right-4">
+        <div className="absolute bottom-2 left-4 right-4 z-10">
           <Button
             onClick={() => setShowBetting(true)}
             className="w-full gap-2 rounded-xl bg-primary/90 backdrop-blur-sm"
@@ -152,9 +178,17 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
 }
 
 function CountdownBadge({ deadline }: { deadline: Date }) {
-  const [timeLeft, setTimeLeft] = useState("");
+  // Stable initial value so server and client match (avoids hydration mismatch)
+  const [timeLeft, setTimeLeft] = useState("0:00");
+  const [mounted, setMounted] = useState(false);
 
-  useState(() => {
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+
     const update = () => {
       const diff = deadline.getTime() - Date.now();
       if (diff <= 0) {
@@ -165,10 +199,11 @@ function CountdownBadge({ deadline }: { deadline: Date }) {
       const seconds = Math.floor((diff % 60000) / 1000);
       setTimeLeft(`${minutes}:${seconds.toString().padStart(2, "0")}`);
     };
+
     update();
     const interval = setInterval(update, 1000);
     return () => clearInterval(interval);
-  });
+  }, [deadline, mounted]);
 
   return (
     <span className="ml-1 flex items-center gap-1 rounded-full bg-black/30 px-2 py-0.5 text-xs">

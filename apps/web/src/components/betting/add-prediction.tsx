@@ -25,21 +25,49 @@ export function AddPrediction({
     if (!text.trim()) return;
     setLoading(true);
 
-    const result = await submitPrediction({
-      clip_node_id: clipNodeId,
-      raw_text: text.trim(),
-    });
+    const payload = { clip_node_id: clipNodeId, raw_text: text.trim() };
+    let result: Awaited<ReturnType<typeof submitPrediction>>;
 
-    if (result.error) {
+    try {
+      result = await submitPrediction(payload);
+    } catch (err) {
+      const isAbort =
+        err instanceof Error &&
+        (err.name === "AbortError" || err.message?.includes("Lock broken"));
+      if (isAbort) {
+        await new Promise((r) => setTimeout(r, 400));
+        try {
+          result = await submitPrediction(payload);
+        } catch (retryErr) {
+          toast({
+            title: "Failed to submit",
+            description: "Connection conflict. Please try again.",
+            variant: "destructive",
+          });
+          setLoading(false);
+          return;
+        }
+      } else {
+        toast({
+          title: "Failed to submit",
+          description: err instanceof Error ? err.message : "Something went wrong",
+          variant: "destructive",
+        });
+        setLoading(false);
+        return;
+      }
+    }
+
+    if (result!.error) {
       toast({
         title: "Failed to submit",
-        description: result.error,
+        description: result!.error,
         variant: "destructive",
       });
     } else {
       toast({
-        title: result.merged ? "Merged with existing" : "Prediction created!",
-        description: result.merged
+        title: result!.merged ? "Merged with existing" : "Prediction created!",
+        description: result!.merged
           ? "Your prediction matched an existing market"
           : "Others can now bet on your prediction",
         variant: "success",
@@ -54,12 +82,12 @@ export function AddPrediction({
   return (
     <form onSubmit={handleSubmit} className="flex gap-2">
       <div className="relative flex-1">
-        <Sparkles className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary" />
+        <Sparkles className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary pointer-events-none" />
         <Input
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="What happens next?"
-          className="pl-9"
+          className="pl-9 pr-4 py-3"
           maxLength={300}
           disabled={loading}
         />

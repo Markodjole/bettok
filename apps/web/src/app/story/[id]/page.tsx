@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { createBrowserClient } from "@/lib/supabase/client";
+import { useUserStore } from "@/stores/user-store";
 import { GitBranch, Play, ChevronRight } from "lucide-react";
 
 interface StoryNode {
@@ -25,11 +26,13 @@ interface StoryNode {
 
 export default function StoryPage() {
   const { id } = useParams<{ id: string }>();
+  const authLoading = useUserStore((s) => s.isLoading);
   const [story, setStory] = useState<Record<string, unknown> | null>(null);
   const [nodes, setNodes] = useState<StoryNode[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (authLoading) return;
     async function load() {
       const supabase = createBrowserClient();
 
@@ -48,7 +51,7 @@ export default function StoryPage() {
       setLoading(false);
     }
     load();
-  }, [id]);
+  }, [id, authLoading]);
 
   if (loading) {
     return (

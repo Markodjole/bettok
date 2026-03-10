@@ -27,36 +27,56 @@ export interface FeedClip {
   creator_avatar_path: string | null;
 }
 
-export async function getFeedClips(
+const isDbUnavailable = (err: { code?: string; message?: string }) =>
+  err?.code === "PGRST002" ||
+  err?.message?.includes("schema cache") ||
+  err?.message?.includes("503") ||
+  err?.message?.includes("Service Unavailable");
+
+async function getFeedClipsOnce(
+  supabase: Awaited<ReturnType<typeof import("@/lib/supabase/server").createServerClient>>,
   cursor?: string,
   limit = 10
-): Promise<{ clips: FeedClip[]; nextCursor: string | null }> {
-  const supabase = await createServerClient();
-
+) {
   let query = supabase
     .from("feed_clips")
     .select("*")
     .order("published_at", { ascending: false })
     .limit(limit);
+  if (cursor) query = query.lt("published_at", cursor);
+  return query;
+}
 
-  if (cursor) {
-    query = query.lt("published_at", cursor);
-  }
+export async function getFeedClips(
+  cursor?: string,
+  limit = 10
+): Promise<{ clips: FeedClip[]; nextCursor: string | null }> {
+  const supabase = await createServerClient();
+  const maxAttempts = 4;
+  const delayMs = 800;
 
-  const { data, error } = await query;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const { data, error } = await getFeedClipsOnce(supabase, cursor, limit);
 
-  if (error) {
+    if (!error) {
+      const clips = (data || []) as FeedClip[];
+      const nextCursor =
+        clips.length === limit
+          ? clips[clips.length - 1]?.published_at ?? null
+          : null;
+      return { clips, nextCursor };
+    }
+
+    if (attempt < maxAttempts && isDbUnavailable(error)) {
+      await new Promise((r) => setTimeout(r, delayMs * attempt));
+      continue;
+    }
+
     console.error("Feed query error:", error);
     return { clips: [], nextCursor: null };
   }
 
-  const clips = (data || []) as FeedClip[];
-  const nextCursor =
-    clips.length === limit
-      ? clips[clips.length - 1]?.published_at ?? null
-      : null;
-
-  return { clips, nextCursor };
+  return { clips: [], nextCursor: null };
 }
 
 export async function getClipById(id: string) {
@@ -156,7 +176,66 @@ export async function uploadClip(formData: FormData) {
       tone,
       published_at: new Date().toISOString(),
       betting_deadline: new Date(
-        Date.now() + 5 * 60 * 1000
+        Date.now() + 72 * 60 * 60 * 1000
+      ).toISOString(),
+    })
+    .select()
+    .single();
+
+  if (clipError) return { error: "Failed to create clip" };
+
+  await serviceClient
+    .from("stories")
+    .update({ root_clip_node_id: clipNode.id })
+    .eq("id", story.id);
+
+  return { data: clipNode };
+}
+
+/** Create story + clip after client has uploaded the video to Supabase Storage (avoids server action body size limits). */
+export async function createClipFromUpload(input: {
+  storagePath: string;
+  title: string;
+  genre?: string | null;
+  tone?: string | null;
+}) {
+  const supabase = await createServerClient();
+  const serviceClient = await createServiceClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated" };
+
+  const { storagePath, title, genre = null, tone = null } = input;
+  if (!storagePath || !title?.trim()) return { error: "Missing required fields" };
+
+  const { data: story, error: storyError } = await serviceClient
+    .from("stories")
+    .insert({
+      title: title.trim(),
+      genre,
+      tone,
+      creator_user_id: user.id,
+    })
+    .select()
+    .single();
+
+  if (storyError) return { error: "Failed to create story" };
+
+  const { data: clipNode, error: clipError } = await serviceClient
+    .from("clip_nodes")
+    .insert({
+      story_id: story.id,
+      creator_user_id: user.id,
+      source_type: "upload",
+      status: "betting_open",
+      video_storage_path: storagePath,
+      genre,
+      tone,
+      published_at: new Date().toISOString(),
+      betting_deadline: new Date(
+        Date.now() + 72 * 60 * 60 * 1000
       ).toISOString(),
     })
     .select()

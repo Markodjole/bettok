@@ -23,7 +23,8 @@ export const PREDICTION_LIMITS = {
   MAX_PER_USER_PER_CLIP: 3,
 } as const;
 
-export const BETTING_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+// Temporary: 72h for testing (was 5 min)
+export const BETTING_WINDOW_MS = 72 * 60 * 60 * 1000;
 
 export const SETTLEMENT_ALGORITHM_VERSION = "v1.0.0";
 export const ODDS_ALGORITHM_VERSION = "v1.0.0";

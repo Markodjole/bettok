@@ -32,12 +32,13 @@ interface Stats {
 
 export default function AdminPage() {
   const profile = useUserStore((s) => s.profile);
+  const authLoading = useUserStore((s) => s.isLoading);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadStats();
-  }, []);
+    if (!authLoading) loadStats();
+  }, [authLoading]);
 
   async function loadStats() {
     setLoading(true);

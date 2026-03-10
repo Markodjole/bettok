@@ -1,15 +1,19 @@
-[project]
-id = "bettok"
-
+# Ports 54331+ to avoid conflict with other Supabase projects on default 54321–54330
 [api]
-port = 54321
+port = 54331
 schemas = ["public"]
 
 [db]
-port = 54322
+port = 54332
 
 [studio]
-port = 54323
+port = 54333
+
+[inbucket]
+port = 54334
+
+[analytics]
+port = 54337
 
 [auth]
 site_url = "http://localhost:3000"

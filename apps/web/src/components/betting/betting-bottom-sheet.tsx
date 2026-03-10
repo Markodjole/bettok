@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getClipMarkets } from "@/actions/clips";
+import { useClipMarketsStore, type ClipMarket } from "@/stores/clip-markets-store";
 import { TrendingUp, ChevronLeft } from "lucide-react";
 
 interface BettingBottomSheetProps {
@@ -23,37 +23,22 @@ interface BettingBottomSheetProps {
   onOpenChange: (open: boolean) => void;
 }
 
-interface MarketData {
-  id: string;
-  canonical_text: string;
-  market_key: string;
-  status: string;
-  market_sides: Array<{
-    id: string;
-    side_key: "yes" | "no";
-    current_odds_decimal: number;
-    probability: number;
-    pool_amount: number;
-    bet_count: number;
-  }>;
-}
-
 export function BettingBottomSheet({
   clipId,
   open,
   onOpenChange,
 }: BettingBottomSheetProps) {
-  const [markets, setMarkets] = useState<MarketData[]>([]);
+  const markets = useClipMarketsStore((s) => s.getMarkets(clipId));
+  const refetchMarkets = useClipMarketsStore((s) => s.refetchMarkets);
   const [loading, setLoading] = useState(true);
-  const [selectedMarket, setSelectedMarket] = useState<MarketData | null>(null);
+  const [selectedMarket, setSelectedMarket] = useState<ClipMarket | null>(null);
   const [selectedSide, setSelectedSide] = useState<"yes" | "no" | null>(null);
 
   const loadMarkets = useCallback(async () => {
     setLoading(true);
-    const data = await getClipMarkets(clipId);
-    setMarkets(data as unknown as MarketData[]);
+    await refetchMarkets(clipId);
     setLoading(false);
-  }, [clipId]);
+  }, [clipId, refetchMarkets]);
 
   useEffect(() => {
     if (open) {
@@ -61,7 +46,7 @@ export function BettingBottomSheet({
     }
   }, [open, loadMarkets]);
 
-  function handleSelectSide(market: MarketData, side: "yes" | "no") {
+  function handleSelectSide(market: ClipMarket, side: "yes" | "no") {
     setSelectedMarket(market);
     setSelectedSide(side);
   }
@@ -73,8 +58,8 @@ export function BettingBottomSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom" className="h-[80dvh] rounded-t-2xl">
-        <SheetHeader className="px-1">
+      <SheetContent side="bottom" className="h-[80dvh] rounded-t-2xl px-4 pb-6">
+        <SheetHeader className="px-0">
           {selectedMarket ? (
             <div className="flex items-center gap-2">
               <button
@@ -98,7 +83,7 @@ export function BettingBottomSheet({
           )}
         </SheetHeader>
 
-        <ScrollArea className="mt-4 h-[calc(100%-8rem)]">
+        <ScrollArea className="mt-4 h-[calc(100%-9rem)] px-1">
           {selectedMarket && selectedSide ? (
             <BetForm
               marketId={selectedMarket.id}
@@ -111,11 +96,11 @@ export function BettingBottomSheet({
               canonicalText={selectedMarket.canonical_text}
               onBetPlaced={() => {
                 handleBack();
-                loadMarkets();
+                refetchMarkets(clipId);
               }}
             />
           ) : (
-            <div className="space-y-3 pb-4">
+            <div className="space-y-3 pb-6">
               {loading ? (
                 Array.from({ length: 3 }).map((_, i) => (
                   <Skeleton key={i} className="h-28 w-full rounded-xl" />
@@ -160,8 +145,10 @@ export function BettingBottomSheet({
 
         {!selectedMarket && (
           <>
-            <Separator className="my-3" />
-            <AddPrediction clipNodeId={clipId} onPredictionAdded={loadMarkets} />
+            <Separator className="my-4" />
+            <div className="px-1">
+              <AddPrediction clipNodeId={clipId} onPredictionAdded={loadMarkets} />
+            </div>
           </>
         )}
       </SheetContent>

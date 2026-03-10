@@ -87,7 +87,7 @@ export async function startContinuation(clipNodeId: string) {
       tone: clipNode.tone,
       realism_level: clipNode.realism_level,
       published_at: new Date().toISOString(),
-      betting_deadline: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      betting_deadline: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),
     })
     .select()
     .single();

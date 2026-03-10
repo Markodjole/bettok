@@ -16,7 +16,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
-import { uploadClip } from "@/actions/clips";
+import { createClipFromUpload } from "@/actions/clips";
+import { createBrowserClient, getUserQueued } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 const GENRES = [
@@ -81,15 +82,39 @@ export default function CreatePage() {
     setUploadProgress(10);
 
     startTransition(async () => {
-      const formData = new FormData();
-      formData.append("video", file);
-      formData.append("title", title.trim());
-      if (genre) formData.append("genre", genre);
-      if (tone) formData.append("tone", tone);
+      const {
+        data: { user },
+      } = await getUserQueued();
+      if (!user) {
+        toast({ title: "Not signed in", description: "Please sign in to upload", variant: "destructive" });
+        setUploadProgress(0);
+        return;
+      }
 
-      setUploadProgress(40);
+      setUploadProgress(20);
 
-      const result = await uploadClip(formData);
+      const ext = file.name.split(".").pop() || "mp4";
+      const storagePath = `clips/${user.id}/${Date.now()}.${ext}`;
+      const supabase = createBrowserClient();
+
+      const { error: uploadError } = await supabase.storage
+        .from("media")
+        .upload(storagePath, file, { upsert: false });
+
+      setUploadProgress(70);
+
+      if (uploadError) {
+        toast({ title: "Upload failed", description: uploadError.message, variant: "destructive" });
+        setUploadProgress(0);
+        return;
+      }
+
+      const result = await createClipFromUpload({
+        storagePath,
+        title: title.trim(),
+        genre: genre || null,
+        tone: tone || null,
+      });
 
       setUploadProgress(90);
 
