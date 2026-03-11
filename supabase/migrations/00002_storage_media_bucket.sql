@@ -1,4 +1,4 @@
--- Create storage bucket for clip videos and posters
+-- Create storage bucket for clip videos and posters (run this on hosted Supabase if you get "bucket not found")
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES (
   'media',
