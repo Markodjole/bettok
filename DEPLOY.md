@@ -29,20 +29,16 @@ git push -u origin main
 
 1. Go to [vercel.com](https://vercel.com) → Sign in (e.g. with GitHub).
 2. **Add New… → Project** → Import your GitHub repo.
-3. **Configure:**
-   - **Root Directory:** click **Edit** → set to `apps/web` → **Continue**.
-   - **Build and Output Settings:**
-     - **Build Command:**  
-       `cd ../.. && pnpm install && pnpm exec turbo build --filter=@bettok/web`
-     - **Install Command:**  
-       `cd ../.. && pnpm install`
-     - Leave **Output Directory** as default (Vercel detects Next.js).
-4. **Environment Variables** (Add):
+3. **Root Directory (required):** Click **Edit** next to Root Directory → enter `apps/web` → **Continue**. If you leave this blank, Vercel will not detect Next.js and the build will fail.
+4. **Build and Output Settings:** The repo’s `apps/web/vercel.json` already sets Install/Build. Optionally in the UI set:
+   - **Install Command:** `(cd ../.. && pnpm install)`
+   - **Build Command:** `cd ../.. && pnpm exec turbo build --filter=@bettok/web`
+5. **Environment Variables** (Add):
    - `NEXT_PUBLIC_SUPABASE_URL` = your Supabase Project URL  
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY` = your Supabase anon key  
    - `SUPABASE_SERVICE_ROLE_KEY` = your Supabase service_role key  
-5. Click **Deploy**. Wait for the build to finish.
-6. Open the generated URL (e.g. `https://your-app.vercel.app`) on your phone.
+6. Click **Deploy**. Wait for the build to finish.
+7. Open the generated URL (e.g. `https://your-app.vercel.app`) on your phone.
 
 ## 4. Supabase auth redirect (for login/signup)
 
