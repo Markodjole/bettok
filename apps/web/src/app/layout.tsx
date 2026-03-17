@@ -3,13 +3,17 @@ import { Inter } from "next/font/google";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({
+  subsets: ["latin"],
+  display: "swap",
+  preload: false,
+});
 
 export const metadata: Metadata = {
   title: "BetTok — Watch. Predict. Win.",
   description:
     "A mobile-first short-video prediction betting platform. Watch clips, predict what happens next, and win.",
-  manifest: "/manifest",
+  manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",

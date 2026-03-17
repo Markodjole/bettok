@@ -51,6 +51,11 @@ export async function settleClipNode(clipNodeId: string) {
 
   if (srError) return { error: "Failed to create settlement result" };
 
+  const outcomeParts: string[] = [];
+  let resolutionReason = continuationJob.continuation_summary || "Settlement complete";
+  /** Per-user net profit (positive) or loss (negative) across all bets on this clip */
+  const userNetPayout = new Map<string, number>();
+
   for (const market of markets) {
     const score = mockScoreSettlement(
       market.market_key,
@@ -86,6 +91,11 @@ export async function settleClipNode(clipNodeId: string) {
       confidence: score.confidence,
       evidence_bullets: score.evidence_bullets,
     });
+
+    const canonical = (market as Record<string, string>).canonical_text || "Prediction";
+    const winnerLabel = settlement.winnerSide === "yes" ? "YES" : "NO";
+    outcomeParts.push(`${canonical}: ${winnerLabel}`);
+    if (outcomeParts.length === 1) resolutionReason = score.explanation_short || resolutionReason;
 
     const { data: bets } = await supabase
       .from("bets")
@@ -170,6 +180,12 @@ export async function settleClipNode(clipNodeId: string) {
         }
       }
 
+      const net = isWinningSide
+        ? payout - Number(bet.stake_amount)
+        : -(Number(bet.stake_amount) - payout);
+      const prev = userNetPayout.get(bet.user_id) ?? 0;
+      userNetPayout.set(bet.user_id, prev + net);
+
       await supabase.from("notifications").insert({
         user_id: bet.user_id,
         type: isWinningSide ? "bet_won" : "bet_lost",
@@ -187,10 +203,32 @@ export async function settleClipNode(clipNodeId: string) {
       .eq("id", market.id);
   }
 
+  const winningOutcomeText = outcomeParts.length > 0 ? outcomeParts.join(" · ") : "Settled";
+  const now = new Date().toISOString();
+
   await supabase
     .from("clip_nodes")
-    .update({ status: "settled" })
+    .update({
+      status: "settled",
+      winning_outcome_text: winningOutcomeText,
+      resolution_reason_text: resolutionReason,
+      resolved_at: now,
+    })
     .eq("id", clipNodeId);
+
+  for (const [userId, net] of userNetPayout) {
+    const payoutLine =
+      net > 0 ? `You won $${net.toFixed(2)}` : net < 0 ? `You lost $${Math.abs(net).toFixed(2)}` : "";
+    await supabase.from("notifications").insert({
+      user_id: userId,
+      type: "clip_resolved",
+      title: "Your clip resolved",
+      body: [`Winning outcome: ${winningOutcomeText}`, payoutLine].filter(Boolean).join(". "),
+      link: `/clip/${clipNodeId}`,
+      reference_type: "clip",
+      reference_id: clipNodeId,
+    });
+  }
 
   return { data: settlementResult };
 }

@@ -1,19 +1,20 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { FeedClip } from "@/actions/clips";
-import { archiveClip } from "@/actions/clips";
+import { archiveClip, setResolveVideoPath } from "@/actions/clips";
 import { VideoPlayer } from "@/components/clip/video-player";
 import { BettingBottomSheet } from "@/components/betting/betting-bottom-sheet";
 import { LoopBetOverlay } from "@/components/feed/loop-bet-overlay";
+import { ResolvedClipPlayer } from "@/components/feed/resolved-clip-player";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { useUserStore } from "@/stores/user-store";
 import { useFeedStore } from "@/stores/feed-store";
-import { getUserQueued } from "@/lib/supabase/client";
+import { createBrowserClient, getUserQueued } from "@/lib/supabase/client";
 import { formatCompactNumber } from "@/lib/utils";
 import {
   ChevronUp,
@@ -26,6 +27,7 @@ import {
   Trash2,
   Volume2,
   VolumeX,
+  CheckCircle2,
 } from "lucide-react";
 
 interface VideoCardProps {
@@ -38,10 +40,14 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
   const [showLoopOverlay, setShowLoopOverlay] = useState(false);
   const [showDeleteMenu, setShowDeleteMenu] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [resolving, setResolving] = useState(false);
+  const resolveInputRef = useRef<HTMLInputElement>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const { profile } = useUserStore();
   const router = useRouter();
   const { toast } = useToast();
+  const isSettled = clip.status === "settled";
+  const isResolvedWithPart2 = isSettled && !!clip.part2_video_storage_path;
   const isBettingOpen = clip.status === "betting_open";
   const deadline = clip.betting_deadline
     ? new Date(clip.betting_deadline)
@@ -61,6 +67,52 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
   const handleLoopEnd = useCallback(() => {
     if (isBettingOpen && !isExpired) setShowLoopOverlay(true);
   }, [isBettingOpen, isExpired]);
+
+  async function handleResolveFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setShowDeleteMenu(false);
+    setResolving(true);
+    e.target.value = "";
+
+    const { data: { user } } = await getUserQueued();
+    if (!user) {
+      setResolving(false);
+      toast({ title: "Please sign in", variant: "destructive" });
+      return;
+    }
+
+    const ext = file.name.split(".").pop() || "mp4";
+    const storagePath = `clips/${user.id}/${clip.id}_part2.${ext}`;
+    const supabase = createBrowserClient();
+
+    const { error: uploadError } = await supabase.storage
+      .from("media")
+      .upload(storagePath, file, { upsert: true });
+
+    if (uploadError) {
+      setResolving(false);
+      toast({
+        title: "Upload failed",
+        description: uploadError.message,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const result = await setResolveVideoPath(clip.id, storagePath);
+    setResolving(false);
+    if ((result as { error?: string }).error) {
+      toast({
+        title: "Resolve failed",
+        description: (result as { error?: string }).error,
+        variant: "destructive",
+      });
+    } else {
+      toast({ title: "Resolve video uploaded", variant: "success" });
+      router.refresh();
+    }
+  }
 
   async function handleDelete() {
     setShowDeleteMenu(false);
@@ -82,18 +134,22 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
 
   return (
     <div className="relative h-full w-full snap-start">
-      <VideoPlayer
-        src={clip.video_storage_path}
-        poster={clip.poster_storage_path}
-        pauseStartMs={clip.pause_start_ms}
-        durationMs={clip.duration_ms}
-        isActive={isActive}
-        onLoopEnd={handleLoopEnd}
-      />
-
-      {/* After first loop: semi-transparent overlay with predictions + one-tap bet; video keeps playing */}
-      {showLoopOverlay && isBettingOpen && !isExpired && (
-        <LoopBetOverlay clipId={clip.id} />
+      {isResolvedWithPart2 ? (
+        <ResolvedClipPlayer clip={clip} isActive={isActive} />
+      ) : (
+        <>
+          <VideoPlayer
+            src={clip.video_storage_path}
+            poster={clip.poster_storage_path}
+            pauseStartMs={clip.pause_start_ms}
+            durationMs={clip.duration_ms}
+            isActive={isActive}
+            onLoopEnd={handleLoopEnd}
+          />
+          {showLoopOverlay && isBettingOpen && !isExpired && (
+            <LoopBetOverlay clipId={clip.id} />
+          )}
+        </>
       )}
 
       {/* Gradient overlay at bottom */}
@@ -169,33 +225,43 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
           </span>
         </button>
 
-        <button
-          type="button"
-          onClick={() => setShowBetting(true)}
-          className="flex flex-col items-center gap-1 touch-manipulation"
-          aria-label="See predictions and bet"
-        >
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm">
-            <TrendingUp className="h-5 w-5 text-white" />
-          </div>
-          <span className="text-[10px] text-white/80">
-            {formatCompactNumber(clip.bet_count)}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setShowBetting(true)}
-          className="flex flex-col items-center gap-1 touch-manipulation"
-          aria-label="Predictions"
-        >
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm">
-            <MessageSquare className="h-5 w-5 text-white" />
-          </div>
-        </button>
+        {!isSettled && (
+          <>
+            <button
+              type="button"
+              onClick={() => setShowBetting(true)}
+              className="flex flex-col items-center gap-1 touch-manipulation"
+              aria-label="See predictions and bet"
+            >
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm">
+                <TrendingUp className="h-5 w-5 text-white" />
+              </div>
+              <span className="text-[10px] text-white/80">
+                {formatCompactNumber(clip.bet_count)}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowBetting(true)}
+              className="flex flex-col items-center gap-1 touch-manipulation"
+              aria-label="Predictions"
+            >
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm">
+                <MessageSquare className="h-5 w-5 text-white" />
+              </div>
+            </button>
+          </>
+        )}
 
         {isOwner && (
           <div className="relative flex flex-col items-center gap-1">
+            <input
+              ref={resolveInputRef}
+              type="file"
+              accept="video/*"
+              className="hidden"
+              onChange={handleResolveFile}
+            />
             <button
               type="button"
               onClick={() => setShowDeleteMenu((v) => !v)}
@@ -207,7 +273,20 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
               </div>
             </button>
             {showDeleteMenu && (
-              <div className="absolute right-0 top-full mt-1 min-w-[140px] rounded-lg border border-border bg-black/90 backdrop-blur-sm shadow-lg overflow-hidden">
+              <div className="absolute right-0 bottom-full mb-1 min-w-[140px] rounded-lg border border-border bg-black/90 backdrop-blur-sm shadow-lg overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => {
+                    resolveInputRef.current?.click();
+                    // close after opening picker (avoid unmounting input before click)
+                    setTimeout(() => setShowDeleteMenu(false), 0);
+                  }}
+                  disabled={resolving}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-white hover:bg-white/10 touch-manipulation disabled:opacity-50"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  {resolving ? "Uploading..." : "Resolve"}
+                </button>
                 <button
                   type="button"
                   onClick={handleDelete}
@@ -230,7 +309,7 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
         )}
       </div>
 
-      {/* Betting CTA */}
+      {/* Betting CTA (only when not settled) */}
       {isBettingOpen && !isExpired && (
         <div className="absolute bottom-2 left-4 right-4 z-10">
           <Button
@@ -247,7 +326,8 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
         </div>
       )}
 
-      {clip.status === "settled" && (
+      {/* Settled: optional link to full clip (when not using resolved player) */}
+      {isSettled && !isResolvedWithPart2 && (
         <div className="absolute bottom-2 left-4 right-4">
           <Link href={`/clip/${clip.id}`}>
             <Button

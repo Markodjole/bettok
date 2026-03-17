@@ -33,6 +33,7 @@ export function VideoPlayer({
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [showControls, setShowControls] = useState(false);
+  const [isExtremeLandscape, setIsExtremeLandscape] = useState(false);
   const isMuted = useFeedStore((s) => s.isMuted);
   const toggleMute = useFeedStore((s) => s.toggleMute);
 
@@ -118,10 +119,40 @@ export function VideoPlayer({
     "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
   const posterUrl = toStorageUrl(poster) ?? undefined;
 
+  const handleLoadedMetadata = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const ratio = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 1;
+    // Treat wide clips (e.g. laptop aspect on phone) as extreme landscape
+    setIsExtremeLandscape(ratio > 1.3);
+  }, []);
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.pointerType !== "touch") return;
+      const video = videoRef.current;
+      if (!video) return;
+      video.pause();
+      setIsPlaying(false);
+    },
+    []
+  );
+
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.pointerType !== "touch") return;
+      // Do nothing on release; video stays paused until user explicitly presses play.
+    },
+    []
+  );
+
   return (
     <div
-      className={cn("relative h-full w-full bg-black", className)}
+      className={cn("relative h-full w-full bg-black overflow-hidden", className)}
       onClick={() => setShowControls((s) => !s)}
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
     >
       <video
         ref={videoRef}
@@ -132,7 +163,13 @@ export function VideoPlayer({
         muted={isMuted}
         preload="metadata"
         onTimeUpdate={handleTimeUpdate}
-        className="h-full w-full object-cover"
+        onLoadedMetadata={handleLoadedMetadata}
+        className={cn(
+          "h-full w-full object-contain",
+          // Slight zoom for wide landscape videos on tall screens:
+          // reduce huge black bars but still keep most of the scene visible.
+          isExtremeLandscape && "scale-[1.25] origin-center"
+        )}
       />
 
       {/* Progress bar */}
@@ -172,8 +209,6 @@ export function VideoPlayer({
           )}
         </button>
       </div>
-
-      
     </div>
   );
 }

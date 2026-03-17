@@ -39,3 +39,11 @@ export function truncate(str: string, length: number): string {
   if (str.length <= length) return str;
   return str.slice(0, length) + "...";
 }
+
+/** Supabase storage path → public URL for media bucket */
+export function getMediaUrl(path: string | null | undefined): string | undefined {
+  if (!path) return undefined;
+  if (path.startsWith("http")) return path;
+  const base = typeof process !== "undefined" ? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "" : "";
+  return `${base}/storage/v1/object/public/media/${path.replace(/^\//, "")}`;
+}

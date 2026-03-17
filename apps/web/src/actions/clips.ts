@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { createServerClient, createServiceClient } from "@/lib/supabase/server";
 
 export interface FeedClip {
@@ -25,6 +26,11 @@ export interface FeedClip {
   creator_username: string;
   creator_display_name: string;
   creator_avatar_path: string | null;
+  /** Resolved clip only: Part 2 (continuation) video path */
+  part2_video_storage_path?: string | null;
+  winning_outcome_text?: string | null;
+  resolution_reason_text?: string | null;
+  resolved_at?: string | null;
 }
 
 const isDbUnavailable = (err: { code?: string; message?: string }) =>
@@ -297,5 +303,52 @@ export async function archiveClip(clipId: string) {
 
   if (updateError) return { error: "Failed to delete clip" };
 
+  return { success: true };
+}
+
+/** After client has uploaded Part 2 to Storage, set path and mark clip settled (avoids server action body size limit). */
+export async function setResolveVideoPath(clipId: string, storagePath: string) {
+  const supabase = await createServerClient();
+  const serviceClient = await createServiceClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated" };
+
+  const { data: clip, error } = await serviceClient
+    .from("clip_nodes")
+    .select("id, creator_user_id")
+    .eq("id", clipId)
+    .single();
+
+  if (error || !clip) return { error: "Clip not found" };
+  if (clip.creator_user_id !== user.id) return { error: "Not allowed" };
+
+  if (!storagePath?.startsWith("clips/")) return { error: "Invalid storage path" };
+
+  const now = new Date().toISOString();
+  const { error: updateError } = await serviceClient
+    .from("clip_nodes")
+    .update({
+      part2_video_storage_path: storagePath,
+      status: "settled",
+      winning_outcome_text: "Manual resolution",
+      resolution_reason_text: "Uploaded for testing",
+      resolved_at: now,
+    })
+    .eq("id", clipId);
+
+  if (updateError) {
+    const msg = updateError.message || "database error";
+    const hint =
+      msg.includes("part2_video_storage_path") || msg.includes("winning_outcome_text")
+        ? " (Did you run migrations 00006 and 00007 on this DB?)"
+        : "";
+    console.error("setResolveVideoPath updateError", updateError);
+    return { error: `Failed to update clip: ${msg}${hint}` };
+  }
+
+  revalidatePath("/feed");
   return { success: true };
 }
