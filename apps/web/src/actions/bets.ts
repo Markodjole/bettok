@@ -15,7 +15,7 @@ export async function placeBet(input: {
   } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
 
-  if (input.stake_amount <= 0 || input.stake_amount > 10000) {
+  if (input.stake_amount <= 0 || input.stake_amount > 50) {
     return { error: "Invalid stake amount" };
   }
 

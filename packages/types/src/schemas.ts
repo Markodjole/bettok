@@ -345,7 +345,7 @@ export type CreatePredictionInput = z.infer<typeof createPredictionInput>;
 export const placeBetInput = z.object({
   prediction_market_id: z.string().uuid(),
   side_key: z.nativeEnum(MarketSideKey),
-  stake_amount: z.number().positive().max(10000),
+  stake_amount: z.number().positive().max(50),
 });
 
 export type PlaceBetInput = z.infer<typeof placeBetInput>;

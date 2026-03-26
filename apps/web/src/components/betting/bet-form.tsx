@@ -19,7 +19,7 @@ interface BetFormProps {
   onBetPlaced: () => void;
 }
 
-const QUICK_AMOUNTS = [5, 10, 25, 50, 100];
+const QUICK_AMOUNTS = [1, 2, 5, 10, 20, 50];
 
 export function BetForm({
   marketId,
@@ -157,7 +157,7 @@ export function BetForm({
             placeholder="0.00"
             className="pl-7"
             min={1}
-            max={10000}
+            max={50}
             step="0.01"
             disabled={loading}
           />
@@ -175,7 +175,7 @@ export function BetForm({
         <Button
           type="submit"
           className="w-full gap-2"
-          disabled={loading || numAmount <= 0 || numAmount > balance}
+          disabled={loading || numAmount <= 0 || numAmount > 50 || numAmount > balance}
         >
           {loading ? (
             <Loader2 className="h-4 w-4 animate-spin" />
