@@ -465,106 +465,10 @@ export default function CreatePage() {
                 Choose a starting image or upload your own, then describe what happens next.
               </p>
 
-              {/* --- Pattern grid + custom upload button --- */}
+              {/* --- Pattern picker / focused selected image --- */}
               <div className="relative">
-                {patternsLoading ? (
-                  <CinemaLoader label="Loading image patterns" />
-                ) : (
-                <div className="grid grid-cols-3 gap-2.5">
-                {patterns.map((p: any) => {
-                  const imgUrl = getMediaUrl(p.image_storage_path);
-                  const isSelected = selectedPatternId === p.id;
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => selectPattern(p.id)}
-                      className={cn(
-                        "relative overflow-hidden rounded-lg border-2 transition-all aspect-[9/16]",
-                        isSelected
-                          ? "border-primary ring-2 ring-primary/30"
-                          : "border-border hover:border-primary/50",
-                      )}
-                    >
-                      {imgUrl && (
-                        <img src={imgUrl} alt={p.title} className="h-full w-full object-cover" />
-                      )}
-                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-1.5 py-1.5">
-                        <p className="text-[10px] font-medium text-white truncate">{p.title}</p>
-                      </div>
-                      {isSelected && (
-                        <div className="absolute inset-0 bg-primary/10 flex items-center justify-center">
-                          <div className="rounded-full bg-primary p-1">
-                            <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                            </svg>
-                          </div>
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-
-                {/* Custom upload tile */}
-                <input
-                  ref={customFileRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={handleCustomFileChange}
-                />
-                {customFile && customImagePath ? (
-                  <button
-                    type="button"
-                    onClick={toggleCustomSelection}
-                    className={cn(
-                      "relative overflow-hidden rounded-lg border-2 transition-all aspect-[9/16]",
-                      isCustomMode
-                        ? "border-primary ring-2 ring-primary/30"
-                        : "border-border",
-                    )}
-                  >
-                    <img
-                      src={URL.createObjectURL(customFile)}
-                      alt="Your image"
-                      className="h-full w-full object-cover"
-                    />
-                    {customUploading && (
-                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                        <Loader2 className="h-6 w-6 text-white animate-spin" />
-                      </div>
-                    )}
-                    {isCustomMode && (
-                      <div className="absolute inset-0 bg-primary/10 flex items-center justify-center">
-                        <div className="rounded-full bg-primary p-1">
-                          <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                        </div>
-                      </div>
-                    )}
-                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-1.5 py-1.5">
-                      <p className="text-[10px] font-medium text-white truncate">Your Image</p>
-                    </div>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => customFileRef.current?.click()}
-                    disabled={customUploading}
-                    className="flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-muted-foreground/25 bg-muted/30 transition-colors hover:border-primary/50 hover:bg-muted/50 aspect-[9/16]"
-                  >
-                    <Upload className="h-6 w-6 text-muted-foreground" />
-                    <span className="text-[10px] font-medium text-muted-foreground px-1 text-center">
-                      Upload your image
-                    </span>
-                  </button>
-                )}
-                </div>
-                )}
-
-                {previewImageUrl && (
-                  <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-black/25">
+                {previewImageUrl ? (
+                  <div className="space-y-3">
                     <button
                       type="button"
                       onClick={() => {
@@ -576,12 +480,12 @@ export default function CreatePage() {
                           setPreviewTitle(null);
                         }
                       }}
-                      className="pointer-events-auto relative w-[84%] max-w-[460px] overflow-hidden rounded-xl border-2 border-primary ring-2 ring-primary/30 shadow-2xl"
+                      className="relative w-full overflow-hidden rounded-xl border-2 border-primary ring-2 ring-primary/30 shadow-2xl"
                     >
                       <img
                         src={previewImageUrl}
                         alt={previewTitle || "Selected image"}
-                        className="h-[56vh] w-full object-cover bg-black/30"
+                        className="h-[58vh] w-full object-cover bg-black/30"
                       />
                       <div className="absolute right-3 top-3 rounded-full bg-primary p-1.5">
                         <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
@@ -594,6 +498,89 @@ export default function CreatePage() {
                         </div>
                       )}
                     </button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => {
+                        if (isCustomMode) {
+                          clearCustomImage();
+                        } else {
+                          setSelectedPatternId(null);
+                          setPreviewImageUrl(null);
+                          setPreviewTitle(null);
+                        }
+                      }}
+                    >
+                      Change image
+                    </Button>
+                  </div>
+                ) : patternsLoading ? (
+                  <CinemaLoader label="Loading image patterns" />
+                ) : (
+                  <div className="grid grid-cols-3 gap-2.5">
+                    {patterns.map((p: any) => {
+                      const imgUrl = getMediaUrl(p.image_storage_path);
+                      const isSelected = selectedPatternId === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => selectPattern(p.id)}
+                          className={cn(
+                            "relative overflow-hidden rounded-lg border-2 transition-all aspect-[9/16]",
+                            isSelected
+                              ? "border-primary ring-2 ring-primary/30"
+                              : "border-border hover:border-primary/50",
+                          )}
+                        >
+                          {imgUrl && <img src={imgUrl} alt={p.title} className="h-full w-full object-cover" />}
+                          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-1.5 py-1.5">
+                            <p className="text-[10px] font-medium text-white truncate">{p.title}</p>
+                          </div>
+                        </button>
+                      );
+                    })}
+
+                    <input
+                      ref={customFileRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleCustomFileChange}
+                    />
+                    {customFile && customImagePath ? (
+                      <button
+                        type="button"
+                        onClick={toggleCustomSelection}
+                        className={cn(
+                          "relative overflow-hidden rounded-lg border-2 transition-all aspect-[9/16]",
+                          isCustomMode ? "border-primary ring-2 ring-primary/30" : "border-border",
+                        )}
+                      >
+                        <img src={URL.createObjectURL(customFile)} alt="Your image" className="h-full w-full object-cover" />
+                        {customUploading && (
+                          <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                            <Loader2 className="h-6 w-6 text-white animate-spin" />
+                          </div>
+                        )}
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-1.5 py-1.5">
+                          <p className="text-[10px] font-medium text-white truncate">Your Image</p>
+                        </div>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => customFileRef.current?.click()}
+                        disabled={customUploading}
+                        className="flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-muted-foreground/25 bg-muted/30 transition-colors hover:border-primary/50 hover:bg-muted/50 aspect-[9/16]"
+                      >
+                        <Upload className="h-6 w-6 text-muted-foreground" />
+                        <span className="text-[10px] font-medium text-muted-foreground px-1 text-center">
+                          Upload your image
+                        </span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
