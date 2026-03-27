@@ -39,6 +39,8 @@ interface VideoCardProps {
 export function VideoCard({ clip, isActive }: VideoCardProps) {
   const [showBetting, setShowBetting] = useState(false);
   const [loopCount, setLoopCount] = useState(0);
+  const [overlayExpanded, setOverlayExpanded] = useState(false);
+  const [openAllOverlaySignal, setOpenAllOverlaySignal] = useState(0);
   const [showDeleteMenu, setShowDeleteMenu] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [resolving, setResolving] = useState(false);
@@ -58,6 +60,8 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
   const isOwner = Boolean(userId && String(clip.creator_user_id) === String(userId));
   const isMuted = useFeedStore((s) => s.isMuted);
   const toggleMute = useFeedStore((s) => s.toggleMute);
+  const showFeedBets = useFeedStore((s) => s.showFeedBets);
+  const setShowFeedBets = useFeedStore((s) => s.setShowFeedBets);
 
   useEffect(() => {
     getUserQueued().then(({ data: { user } }) => {
@@ -68,6 +72,19 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
   const handleLoopEnd = useCallback(() => {
     setLoopCount((prev) => prev + 1);
   }, []);
+
+  useEffect(() => {
+    if (!showFeedBets) {
+      setOverlayExpanded(false);
+    }
+  }, [showFeedBets]);
+
+  const openAllPredictionsOverlay = useCallback(() => {
+    // Show in-video prediction overlay (all cards + comments) instead of bottom drawer.
+    setShowFeedBets(true);
+    setLoopCount((prev) => (prev >= 1 ? prev : 1));
+    setOpenAllOverlaySignal((n) => n + 1);
+  }, [setShowFeedBets]);
 
   async function handleResolveFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -146,12 +163,17 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
             durationMs={clip.duration_ms}
             isActive={isActive}
             onLoopEnd={handleLoopEnd}
+            forceMuted={overlayExpanded}
           />
           {isActive && loopCount === 0 && (
             <CommentsFirstLoop clipId={clip.id} />
           )}
-          {isActive && loopCount >= 1 && isBettingOpen && !isExpired && (
-            <LoopBetOverlay clipId={clip.id} />
+          {isActive && showFeedBets && loopCount >= 1 && isBettingOpen && !isExpired && (
+            <LoopBetOverlay
+              clipId={clip.id}
+              onExpandedChange={setOverlayExpanded}
+              openAllSignal={openAllOverlaySignal}
+            />
           )}
         </>
       )}
@@ -160,7 +182,7 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
       <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-48 bg-gradient-to-t from-black/80 to-transparent" />
 
       {/* Left side info */}
-      <div className="absolute bottom-20 left-4 right-20 space-y-2">
+      <div className="absolute bottom-14 left-4 right-20 space-y-2">
         <div className="flex items-center gap-2">
           <Link
             href={`/profile/${clip.creator_username}`}
@@ -240,7 +262,7 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
             </button>
             <button
               type="button"
-              onClick={() => setShowBetting(true)}
+              onClick={openAllPredictionsOverlay}
               className="flex flex-col items-center gap-1 touch-manipulation"
               aria-label="Predictions"
             >

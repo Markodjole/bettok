@@ -51,18 +51,9 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
-
-  .snap-mandatory {
-    scroll-snap-type: y mandatory;
-  }
-
-  .snap-start {
-    scroll-snap-align: start;
-  }
 }
 
 html {
-  scroll-behavior: smooth;
   overflow: hidden;
 }
 

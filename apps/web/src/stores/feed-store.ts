@@ -28,16 +28,20 @@ interface FeedState {
   currentIndex: number;
   isMuted: boolean;
   lastStakeAmount: number;
+  showFeedBets: boolean;
   setCurrentIndex: (index: number) => void;
   hydratePreferences: () => void;
   toggleMute: () => void;
   setLastStakeAmount: (amount: number) => void;
+  toggleFeedBets: () => void;
+  setShowFeedBets: (visible: boolean) => void;
 }
 
 export const useFeedStore = create<FeedState>((set) => ({
   currentIndex: 0,
   isMuted: false,
   lastStakeAmount: 10,
+  showFeedBets: true,
   setCurrentIndex: (currentIndex) => set({ currentIndex }),
   hydratePreferences: () => {
     set({
@@ -59,4 +63,7 @@ export const useFeedStore = create<FeedState>((set) => ({
       set({ lastStakeAmount: amount });
     }
   },
+  toggleFeedBets: () =>
+    set((s) => ({ showFeedBets: !s.showFeedBets })),
+  setShowFeedBets: (visible) => set({ showFeedBets: visible }),
 }));

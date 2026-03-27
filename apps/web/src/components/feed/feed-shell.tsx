@@ -86,10 +86,19 @@ export function FeedShell({ initialClips }: FeedShellProps) {
   return (
     <div
       ref={containerRef}
-      className="no-scrollbar h-full snap-y snap-mandatory overflow-y-scroll"
+      className="no-scrollbar h-full w-full"
+      style={{
+        overflowY: "scroll",
+        scrollSnapType: "y mandatory",
+        WebkitOverflowScrolling: "touch",
+      }}
     >
       {initialClips.map((clip, index) => (
-        <div key={clip.id} className="h-full w-full snap-start">
+        <div
+          key={clip.id}
+          className="w-full"
+          style={{ height: "100%", scrollSnapAlign: "start" }}
+        >
           <VideoCard clip={clip} isActive={index === currentIndex} />
         </div>
       ))}

@@ -20,9 +20,11 @@ function cap(s: string) {
 
 interface LoopBetOverlayProps {
   clipId: string;
+  onExpandedChange?: (expanded: boolean) => void;
+  openAllSignal?: number;
 }
 
-export function LoopBetOverlay({ clipId }: LoopBetOverlayProps) {
+export function LoopBetOverlay({ clipId, onExpandedChange, openAllSignal = 0 }: LoopBetOverlayProps) {
   const markets = useClipMarketsStore((s) => s.getMarkets(clipId));
   const refetchMarkets = useClipMarketsStore((s) => s.refetchMarkets);
   const [bettingId, setBettingId] = useState<string | null>(null);
@@ -33,6 +35,16 @@ export function LoopBetOverlay({ clipId }: LoopBetOverlayProps) {
   const [pendingBet, setPendingBet] = useState<{ marketId: string; side: "yes" | "no" } | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [detailMarketId, setDetailMarketId] = useState<string | null>(null);
+
+  useEffect(() => {
+    onExpandedChange?.(expanded || !!detailMarketId);
+  }, [expanded, detailMarketId, onExpandedChange]);
+
+  useEffect(() => {
+    if (!openAllSignal) return;
+    setDetailMarketId(null);
+    setExpanded(true);
+  }, [openAllSignal]);
 
   useEffect(() => {
     refetchMarkets(clipId);
@@ -177,7 +189,7 @@ export function LoopBetOverlay({ clipId }: LoopBetOverlayProps) {
           className="pointer-events-auto absolute inset-0 z-30"
           onClick={closeDetail}
         >
-          <div className="absolute left-3 right-3 top-3" onClick={(e) => e.stopPropagation()}>
+          <div className="absolute left-2 right-2 top-1.5" onClick={closeDetail}>
             {(() => {
               const yes = detailMarket.market_sides.find((s) => s.side_key === "yes");
               const no = detailMarket.market_sides.find((s) => s.side_key === "no");
@@ -186,32 +198,39 @@ export function LoopBetOverlay({ clipId }: LoopBetOverlayProps) {
                   <p className="text-sm font-medium text-white/95 leading-snug line-clamp-2 mb-1.5">
                     {cap(detailMarket.canonical_text)}
                   </p>
-                  <div className="flex items-start gap-2">
+                  <div className="flex items-start gap-2 mb-2">
                     <button
                       type="button"
                       disabled={!canBet || !!bettingId}
-                      onClick={() => setPendingBet({ marketId: detailMarket.id, side: "yes" })}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPendingBet({ marketId: detailMarket.id, side: "yes" });
+                      }}
                       className="shrink-0 rounded-md bg-emerald-500/60 px-3 py-1.5 text-[10px] font-semibold text-white transition hover:bg-emerald-500/80 disabled:opacity-50 touch-manipulation"
                     >
                       Yes {yes ? yes.current_odds_decimal.toFixed(2) : ""}
                     </button>
-                    <div className="flex-1 min-w-0 max-h-[50vh] overflow-y-auto">
-                      <PredictionThread
-                        predictionMarketId={detailMarket.id}
-                        visible
-                        mode="expanded"
-                        onInteract={handleThreadInteract}
-                        onComposeChange={setPauseByCompose}
-                      />
-                    </div>
+                    <div className="flex-1 min-w-0" />
                     <button
                       type="button"
                       disabled={!canBet || !!bettingId}
-                      onClick={() => setPendingBet({ marketId: detailMarket.id, side: "no" })}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPendingBet({ marketId: detailMarket.id, side: "no" });
+                      }}
                       className="shrink-0 rounded-md bg-rose-500/60 px-3 py-1.5 text-[10px] font-semibold text-white transition hover:bg-rose-500/80 disabled:opacity-50 touch-manipulation"
                     >
                       No {no ? no.current_odds_decimal.toFixed(2) : ""}
                     </button>
+                  </div>
+                  <div className="max-h-[50vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                    <PredictionThread
+                      predictionMarketId={detailMarket.id}
+                      visible
+                      mode="expanded"
+                      onInteract={handleThreadInteract}
+                      onComposeChange={setPauseByCompose}
+                    />
                   </div>
                 </div>
               );
@@ -268,25 +287,12 @@ export function LoopBetOverlay({ clipId }: LoopBetOverlayProps) {
               );
             })}
           </div>
-          {hasMore && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                closeAll();
-              }}
-              className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center justify-center gap-1 py-1 px-2.5 rounded-t-xl rounded-b-sm bg-black/50 text-white/85 hover:text-white/95 transition touch-manipulation border border-white/20 border-t-white/10 shadow-sm"
-            >
-              <ChevronDown className="h-3.5 w-3.5 rotate-180" />
-              <span className="text-[10px] font-medium">Less</span>
-            </button>
-          )}
         </div>
 
       ) : (
         /* ── Compact view: rotating single prediction ── */
         <div
-          className="pointer-events-auto absolute left-3 right-3 top-3 flex flex-col gap-1"
+          className="pointer-events-auto absolute left-2 right-2 top-1.5 flex flex-col gap-1"
           onTouchStart={(e) => handlePullStart(e.touches[0]?.clientY ?? 0)}
           onTouchMove={(e) => handlePullMove(e.touches[0]?.clientY ?? 0)}
           onTouchEnd={handlePullEnd}
@@ -298,7 +304,7 @@ export function LoopBetOverlay({ clipId }: LoopBetOverlayProps) {
           onMouseLeave={handlePullEnd}
         >
           <div className="space-y-2 overflow-hidden">
-            {displayMarkets.map((market) => {
+              {displayMarkets.map((market) => {
               const yes = market.market_sides.find((s) => s.side_key === "yes");
               const no = market.market_sides.find((s) => s.side_key === "no");
               return (
@@ -307,52 +313,44 @@ export function LoopBetOverlay({ clipId }: LoopBetOverlayProps) {
                   className="animate-[slideUp_0.35s_ease-out]"
                   onClick={() => openDetail(market.id)}
                 >
-                  <div className="rounded-lg bg-black/65 px-2.5 py-2 shadow-md border border-primary/40 cursor-pointer touch-manipulation">
-                    <p className="text-sm font-medium text-white/95 leading-snug line-clamp-2 mb-1.5">
-                      {cap(market.canonical_text)}
-                    </p>
-                    <div className="flex items-start gap-2">
-                      <button
-                        type="button"
-                        disabled={!canBet || !!bettingId}
-                        onClick={(e) => { e.stopPropagation(); setPendingBet({ marketId: market.id, side: "yes" }); }}
-                        className="shrink-0 rounded-md bg-emerald-500/60 px-3 py-1.5 text-[10px] font-semibold text-white transition hover:bg-emerald-500/80 disabled:opacity-50 touch-manipulation"
-                      >
-                        Yes {yes ? yes.current_odds_decimal.toFixed(2) : ""}
-                      </button>
-                      <div className="flex-1 min-w-0">
-                        <PredictionThread
-                          predictionMarketId={market.id}
-                          visible
-                          mode="compact"
-                          onInteract={handleThreadInteract}
-                          onComposeChange={setPauseByCompose}
-                        />
+                  <div className="rounded-lg bg-black/45 shadow-md border border-primary/40 cursor-pointer touch-manipulation overflow-hidden">
+                    <div className="px-2.5 py-2">
+                      <p className="text-sm font-medium text-white/99 leading-snug line-clamp-2 mb-1.5">
+                        {cap(market.canonical_text)}
+                      </p>
+                      <div className="flex items-start gap-2">
+                        <button
+                          type="button"
+                          disabled={!canBet || !!bettingId}
+                          onClick={(e) => { e.stopPropagation(); setPendingBet({ marketId: market.id, side: "yes" }); }}
+                          className="shrink-0 rounded-md bg-emerald-500/60 px-3 py-1.5 text-[10px] font-semibold text-white transition hover:bg-emerald-500/80 disabled:opacity-50 touch-manipulation"
+                        >
+                          Yes {yes ? yes.current_odds_decimal.toFixed(2) : ""}
+                        </button>
+                        <div className="flex-1 min-w-0">
+                          <PredictionThread
+                            predictionMarketId={market.id}
+                            visible
+                            mode="compact"
+                            onInteract={handleThreadInteract}
+                            onComposeChange={setPauseByCompose}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          disabled={!canBet || !!bettingId}
+                          onClick={(e) => { e.stopPropagation(); setPendingBet({ marketId: market.id, side: "no" }); }}
+                          className="shrink-0 rounded-md bg-rose-500/60 px-3 py-1.5 text-[10px] font-semibold text-white transition hover:bg-rose-500/80 disabled:opacity-50 touch-manipulation"
+                        >
+                          No {no ? no.current_odds_decimal.toFixed(2) : ""}
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        disabled={!canBet || !!bettingId}
-                        onClick={(e) => { e.stopPropagation(); setPendingBet({ marketId: market.id, side: "no" }); }}
-                        className="shrink-0 rounded-md bg-rose-500/60 px-3 py-1.5 text-[10px] font-semibold text-white transition hover:bg-rose-500/80 disabled:opacity-50 touch-manipulation"
-                      >
-                        No {no ? no.current_odds_decimal.toFixed(2) : ""}
-                      </button>
                     </div>
                   </div>
                 </div>
               );
-            })}
+              })}
           </div>
-          {hasMore && (
-            <button
-              type="button"
-              onClick={() => setExpanded(true)}
-              className="flex items-center justify-center gap-1 py-1 px-3 rounded-t-sm rounded-b-xl bg-black/50 text-white/85 hover:text-white/95 transition touch-manipulation self-center border border-white/20 border-b-white/10 shadow-sm"
-            >
-              <ChevronDown className="h-3.5 w-3.5" />
-              <span className="text-[10px] font-medium">More</span>
-            </button>
-          )}
         </div>
       )}
 

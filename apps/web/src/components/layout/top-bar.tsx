@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useUserStore } from "@/stores/user-store";
 import { useFeedStore } from "@/stores/feed-store";
 import { formatCurrency } from "@/lib/utils";
-import { Wallet, ChevronDown } from "lucide-react";
+import { Wallet, ChevronDown, Eye, EyeOff } from "lucide-react";
 
 const STAKE_OPTIONS = [1, 2, 5, 10, 20, 50] as const;
 const STAKE_STORAGE_KEY = "bettok_last_stake_amount";
@@ -24,6 +24,8 @@ export function TopBar() {
   const wallet = useUserStore((s) => s.wallet);
   const lastStakeAmount = useFeedStore((s) => s.lastStakeAmount);
   const setLastStakeAmount = useFeedStore((s) => s.setLastStakeAmount);
+  const showFeedBets = useFeedStore((s) => s.showFeedBets);
+  const toggleFeedBets = useFeedStore((s) => s.toggleFeedBets);
   const [showAmountPicker, setShowAmountPicker] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
 
@@ -82,6 +84,19 @@ export function TopBar() {
             </div>
           )}
         </div>
+        <button
+          type="button"
+          onClick={toggleFeedBets}
+          className="flex items-center gap-1 rounded-full bg-secondary px-2.5 py-1.5 text-sm transition-colors hover:bg-secondary/80"
+          aria-label={showFeedBets ? "Hide feed bets" : "Show feed bets"}
+          title={showFeedBets ? "Hide feed bets" : "Show feed bets"}
+        >
+          {showFeedBets ? (
+            <Eye className="h-3.5 w-3.5 text-primary" />
+          ) : (
+            <EyeOff className="h-3.5 w-3.5 text-white/70" />
+          )}
+        </button>
         <Link
           href="/wallet"
           className="flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1.5 text-sm font-medium transition-colors hover:bg-secondary/80"

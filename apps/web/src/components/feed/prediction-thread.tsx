@@ -195,24 +195,11 @@ export function PredictionThread({
         </>
       ) : (
         <>
-          {comments.length > 0 && (() => {
-            const latest = allChronological[allChronological.length - 1];
-            return (
-              <div className="flex items-baseline gap-1">
-                <span className="shrink-0 text-xs font-semibold text-primary/70">
-                  {latest.username}
-                </span>
-                <span className="flex-1 text-xs text-white/80 leading-tight truncate">
-                  {cap(latest.body)}
-                </span>
-                {comments.length > 1 && (
-                  <span className="shrink-0 text-[10px] text-white/40">
-                    …{comments.length}
-                  </span>
-                )}
-              </div>
-            );
-          })()}
+          {comments.length > 0 && (
+            <div className="text-xs text-white/70 leading-tight">
+              {comments.length} {comments.length === 1 ? "comment" : "comments"}
+            </div>
+          )}
         </>
       )}
 

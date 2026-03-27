@@ -14,6 +14,7 @@ interface VideoPlayerProps {
   className?: string;
   onLoopEnd?: () => void;
   pausedByParent?: boolean;
+  forceMuted?: boolean;
 }
 
 export function VideoPlayer({
@@ -24,6 +25,7 @@ export function VideoPlayer({
   className,
   onLoopEnd,
   pausedByParent = false,
+  forceMuted = false,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const controlsHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -84,14 +86,12 @@ export function VideoPlayer({
     return () => video.removeEventListener("canplay", onCanPlay);
   }, [isActive, pausedByParent, tryPlay]);
 
-  // When user toggles mute button, sync to video element.
-  // If browser had forced mute, clear it — user interaction unlocks audio.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     browserForcedMuteRef.current = false;
-    video.muted = isMuted;
-  }, [isMuted]);
+    video.muted = forceMuted || isMuted;
+  }, [isMuted, forceMuted]);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -215,7 +215,7 @@ export function VideoPlayer({
         poster={posterUrl}
         loop
         playsInline
-        muted={isMuted}
+        muted={forceMuted || isMuted}
         preload={isActive ? "auto" : "metadata"}
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
