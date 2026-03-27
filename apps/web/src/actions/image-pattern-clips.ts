@@ -763,6 +763,41 @@ export async function improveVideo(input: {
 // Restore latest draft in review mode (in case user navigated away)
 // ---------------------------------------------------------------------------
 
+export async function dismissDraft(jobId: string) {
+  const supabase = await createServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in" };
+
+  const serviceClient = await createServiceClient();
+  await serviceClient
+    .from("clip_generation_jobs")
+    .update({ status: "dismissed", updated_at: new Date().toISOString() })
+    .eq("id", jobId)
+    .eq("user_id", user.id);
+
+  return { ok: true };
+}
+
+export async function deleteDraft(jobId: string, videoStoragePath: string) {
+  const supabase = await createServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in" };
+
+  const serviceClient = await createServiceClient();
+
+  if (videoStoragePath) {
+    await serviceClient.storage.from("media").remove([videoStoragePath]);
+  }
+
+  await serviceClient
+    .from("clip_generation_jobs")
+    .update({ status: "deleted", video_storage_path: null, updated_at: new Date().toISOString() })
+    .eq("id", jobId)
+    .eq("user_id", user.id);
+
+  return { ok: true };
+}
+
 export async function getPendingReviewDraft() {
   const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();

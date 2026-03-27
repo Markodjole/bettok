@@ -15,6 +15,11 @@ export function FeedShell({ initialClips }: FeedShellProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const currentIndex = useFeedStore((s) => s.currentIndex);
   const setCurrentIndex = useFeedStore((s) => s.setCurrentIndex);
+  const hydratePreferences = useFeedStore((s) => s.hydratePreferences);
+
+  useEffect(() => {
+    hydratePreferences();
+  }, [hydratePreferences]);
 
   const handleScroll = useCallback(() => {
     const container = containerRef.current;
@@ -36,6 +41,30 @@ export function FeedShell({ initialClips }: FeedShellProps) {
     container.addEventListener("scroll", handleScroll, { passive: true });
     return () => container.removeEventListener("scroll", handleScroll);
   }, [handleScroll]);
+
+  useEffect(() => {
+    const isTypingTarget = (el: EventTarget | null) => {
+      if (!(el instanceof HTMLElement)) return false;
+      const tag = el.tagName;
+      return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        el.isContentEditable
+      );
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Prevent browser default "page down" behavior on Space
+      // so feed doesn't jump to the next clip unintentionally.
+      if ((e.code === "Space" || e.key === " ") && !isTypingTarget(e.target)) {
+        e.preventDefault();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, { passive: false });
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   useEffect(() => {
     // Warm browser cache for nearby clips to reduce route/refresh wait.

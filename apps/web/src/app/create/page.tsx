@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, Loader2, ImageIcon, Film } from "lucide-react";
+import { Upload, Loader2, ImageIcon, Film, Trash2 } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,8 @@ import {
   publishDraft,
   improveVideo,
   getPendingReviewDraft,
+  dismissDraft,
+  deleteDraft,
 } from "@/actions/image-pattern-clips";
 import { createBrowserClient, getUserQueued } from "@/lib/supabase/client";
 import { cn, getMediaUrl } from "@/lib/utils";
@@ -29,7 +31,7 @@ export default function CreatePage() {
   const router = useRouter();
   const { toast } = useToast();
   const customFileRef = useRef<HTMLInputElement>(null);
-  const [, startTransition] = useTransition();
+
 
   // Patterns from DB
   const [patterns, setPatterns] = useState<any[]>([]);
@@ -60,6 +62,8 @@ export default function CreatePage() {
   const [improveFeedback, setImproveFeedback] = useState("");
   const [improving, setImproving] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -182,6 +186,29 @@ export default function CreatePage() {
     );
   }
 
+  const stopFakeProgress = () => {
+    if (progressTimerRef.current) {
+      clearInterval(progressTimerRef.current);
+      progressTimerRef.current = null;
+    }
+  };
+
+  const startFakeProgress = () => {
+    stopFakeProgress();
+    progressTimerRef.current = setInterval(() => {
+      setProgress((p) => {
+        if (p >= 92) return p;
+        const remaining = 92 - p;
+        const step = Math.max(0.4, Math.min(3, remaining * 0.08));
+        return Math.min(92, Number((p + step).toFixed(1)));
+      });
+    }, 700);
+  };
+
+  useEffect(() => {
+    return () => stopFakeProgress();
+  }, []);
+
   const selectedPattern = patterns.find((p) => p.id === selectedPatternId);
   const isCustomMode = !!customImagePath && customAnalyzed;
   const hasSource = !!selectedPatternId || isCustomMode;
@@ -282,6 +309,7 @@ export default function CreatePage() {
     setProgress(15);
     setRunning(true);
     setErrorMsg(null);
+    startFakeProgress();
 
     try {
       let res: { error?: string; data?: any };
@@ -305,10 +333,12 @@ export default function CreatePage() {
         setErrorMsg(res.error);
         setProgress(0);
         setRunning(false);
+        stopFakeProgress();
         return;
       }
 
       const d = res.data;
+      stopFakeProgress();
       setProgress(100);
       setRunning(false);
       setErrorMsg(null);
@@ -342,6 +372,7 @@ export default function CreatePage() {
         };
       }
     } catch (err: any) {
+      stopFakeProgress();
       toast({ title: "Generation failed", description: err?.message || "Unknown error", variant: "destructive" });
       setErrorMsg(err?.message || "Unknown error");
       setProgress(0);
@@ -349,10 +380,10 @@ export default function CreatePage() {
     }
   }
 
-  function handlePublish() {
+  async function handlePublish() {
     if (!reviewJobId || !reviewVideoPath) return;
     setPublishing(true);
-    startTransition(async () => {
+    try {
       const res = await publishDraft({
         jobId: reviewJobId!,
         videoStoragePath: reviewVideoPath!,
@@ -361,7 +392,6 @@ export default function CreatePage() {
         llmGeneration: reviewLlmGen,
       });
 
-      setPublishing(false);
       if (res.error) {
         toast({ title: "Publish failed", description: res.error, variant: "destructive" });
         return;
@@ -371,24 +401,27 @@ export default function CreatePage() {
       }
       toast({ title: "Clip posted!", description: "Your clip is now live", variant: "success" });
       setTimeout(() => router.push("/feed"), 300);
-    });
+    } catch (err: any) {
+      toast({ title: "Publish failed", description: err?.message || "Unknown error", variant: "destructive" });
+    } finally {
+      setPublishing(false);
+    }
   }
 
-  function handleImprove() {
+  async function handleImprove() {
     if (!reviewJobId || !reviewVideoPath || !improveFeedback.trim()) {
       toast({ title: "Missing feedback", description: "Describe what should be changed", variant: "destructive" });
       return;
     }
     setImproving(true);
     setErrorMsg(null);
-    startTransition(async () => {
+    try {
       const res = await improveVideo({
         jobId: reviewJobId!,
         videoStoragePath: reviewVideoPath!,
         feedback: improveFeedback.trim(),
       });
 
-      setImproving(false);
       if (res.error) {
         toast({ title: "Improvement failed", description: res.error, variant: "destructive" });
         setErrorMsg(res.error);
@@ -397,7 +430,12 @@ export default function CreatePage() {
       setReviewVideoPath(res.data!.videoStoragePath);
       setImproveFeedback("");
       toast({ title: "Video improved!", description: "Review the new version" });
-    });
+    } catch (err: any) {
+      toast({ title: "Improvement failed", description: err?.message || "Unknown error", variant: "destructive" });
+      setErrorMsg(err?.message || "Unknown error");
+    } finally {
+      setImproving(false);
+    }
   }
 
   const placeholderExamples: Record<string, string> = {
@@ -509,23 +547,58 @@ export default function CreatePage() {
                   </div>
                 )}
 
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="w-full text-muted-foreground"
-                  onClick={() => {
-                    setReviewMode(false);
-                    setReviewVideoPath(null);
-                    setReviewJobId(null);
-                    setImproveFeedback("");
-                    if (typeof window !== "undefined") {
-                      window.localStorage.removeItem(CREATE_REVIEW_CACHE_KEY);
-                    }
-                  }}
-                  disabled={improving || publishing}
-                >
-                  Start Over
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="flex-1 text-muted-foreground"
+                    onClick={async () => {
+                      if (reviewJobId && reviewVideoPath) {
+                        setDeleting(true);
+                        await deleteDraft(reviewJobId, reviewVideoPath).catch(() => {});
+                        setDeleting(false);
+                      }
+                      setReviewMode(false);
+                      setReviewVideoPath(null);
+                      setReviewJobId(null);
+                      setReviewImagePath(null);
+                      setReviewSummary(null);
+                      setReviewLlmGen(null);
+                      setImproveFeedback("");
+                      setErrorMsg(null);
+                      if (typeof window !== "undefined") {
+                        window.localStorage.removeItem(CREATE_REVIEW_CACHE_KEY);
+                      }
+                    }}
+                    disabled={improving || publishing || deleting}
+                  >
+                    Start Over
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="flex-1 text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={async () => {
+                      if (!reviewJobId || !reviewVideoPath) return;
+                      setDeleting(true);
+                      try {
+                        await deleteDraft(reviewJobId, reviewVideoPath);
+                      } catch {}
+                      if (typeof window !== "undefined") {
+                        window.localStorage.removeItem(CREATE_REVIEW_CACHE_KEY);
+                      }
+                      router.push("/feed");
+                    }}
+                    disabled={improving || publishing || deleting}
+                  >
+                    {deleting ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-4 w-4 mr-1" />
+                    )}
+                    {deleting ? "Deleting..." : "Delete Video"}
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           </div>

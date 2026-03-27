@@ -8,6 +8,7 @@ import { archiveClip, setResolveVideoPath } from "@/actions/clips";
 import { VideoPlayer } from "@/components/clip/video-player";
 import { BettingBottomSheet } from "@/components/betting/betting-bottom-sheet";
 import { LoopBetOverlay } from "@/components/feed/loop-bet-overlay";
+import { CommentsFirstLoop } from "@/components/feed/comments-first-loop";
 import { ResolvedClipPlayer } from "@/components/feed/resolved-clip-player";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,7 +38,7 @@ interface VideoCardProps {
 
 export function VideoCard({ clip, isActive }: VideoCardProps) {
   const [showBetting, setShowBetting] = useState(false);
-  const [showLoopOverlay, setShowLoopOverlay] = useState(false);
+  const [loopCount, setLoopCount] = useState(0);
   const [showDeleteMenu, setShowDeleteMenu] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [resolving, setResolving] = useState(false);
@@ -65,8 +66,8 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
   }, []);
 
   const handleLoopEnd = useCallback(() => {
-    if (isBettingOpen && !isExpired) setShowLoopOverlay(true);
-  }, [isBettingOpen, isExpired]);
+    setLoopCount((prev) => prev + 1);
+  }, []);
 
   async function handleResolveFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -146,7 +147,10 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
             isActive={isActive}
             onLoopEnd={handleLoopEnd}
           />
-          {showLoopOverlay && isBettingOpen && !isExpired && (
+          {isActive && loopCount === 0 && (
+            <CommentsFirstLoop clipId={clip.id} />
+          )}
+          {isActive && loopCount >= 1 && isBettingOpen && !isExpired && (
             <LoopBetOverlay clipId={clip.id} />
           )}
         </>
@@ -174,12 +178,6 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
         <h3 className="text-sm font-medium text-white/90 line-clamp-2">
           {clip.story_title}
         </h3>
-
-        {clip.scene_summary && (
-          <p className="text-xs text-white/60 line-clamp-1">
-            {clip.scene_summary}
-          </p>
-        )}
 
         <div className="flex items-center gap-2">
           {clip.genre && (

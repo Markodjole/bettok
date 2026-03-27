@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { placeBet } from "@/actions/bets";
 import { useFeedStore } from "@/stores/feed-store";
 import { useUserStore } from "@/stores/user-store";
@@ -8,8 +8,15 @@ import { useClipMarketsStore } from "@/stores/clip-markets-store";
 import { useToast } from "@/components/ui/toast";
 import { formatCurrency } from "@/lib/utils";
 import { ChevronDown } from "lucide-react";
+import { PredictionThread } from "@/components/feed/prediction-thread";
 
-const MAX_VISIBLE_COMPACT = 2;
+const MAX_VISIBLE = 1;
+const PER_ITEM_MS = 5000;
+const INTERACTION_PAUSE_MS = 5000;
+
+function cap(s: string) {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
 
 interface LoopBetOverlayProps {
   clipId: string;
@@ -24,6 +31,8 @@ export function LoopBetOverlay({ clipId }: LoopBetOverlayProps) {
   const setWallet = useUserStore((s) => s.setWallet);
   const { toast } = useToast();
   const [pendingBet, setPendingBet] = useState<{ marketId: string; side: "yes" | "no" } | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [detailMarketId, setDetailMarketId] = useState<string | null>(null);
 
   useEffect(() => {
     refetchMarkets(clipId);
@@ -77,91 +86,79 @@ export function LoopBetOverlay({ clipId }: LoopBetOverlayProps) {
 
   const balance = wallet?.balance ?? 0;
   const canBet = balance >= lastStakeAmount;
-  const [expanded, setExpanded] = useState(false);
-  const hasMore = markets.length > MAX_VISIBLE_COMPACT;
-  const visibleMarkets = expanded ? markets : markets.slice(0, MAX_VISIBLE_COMPACT);
+  const hasMore = markets.length > MAX_VISIBLE;
 
-  function PredictionBlock({ market }: { market: (typeof markets)[0] }) {
-    const yes = market.market_sides.find((s) => s.side_key === "yes");
-    const no = market.market_sides.find((s) => s.side_key === "no");
-    return (
-      <div className="rounded-lg bg-black/50 px-2.5 py-2 shadow-md">
-        <p className="text-xs text-white/95 mb-2 leading-snug">
-          {market.canonical_text}
-        </p>
-        <div className="flex justify-between gap-2">
-          <button
-            type="button"
-            disabled={!canBet || !!bettingId}
-            onClick={() => setPendingBet({ marketId: market.id, side: "yes" })}
-            className="rounded-lg bg-emerald-500/60 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-emerald-500/80 disabled:opacity-50 touch-manipulation min-w-[64px]"
-          >
-            Yes {yes ? `· ${yes.current_odds_decimal.toFixed(1)}x` : ""}
-          </button>
-          <button
-            type="button"
-            disabled={!canBet || !!bettingId}
-            onClick={() => setPendingBet({ marketId: market.id, side: "no" })}
-            className="rounded-lg bg-rose-500/60 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-rose-500/80 disabled:opacity-50 touch-manipulation min-w-[64px]"
-          >
-            No {no ? `· ${no.current_odds_decimal.toFixed(1)}x` : ""}
-          </button>
-        </div>
-      </div>
-    );
+  const [scrollOffset, setScrollOffset] = useState(0);
+  const scrollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pausedUntilRef = useRef<number>(0);
+  const [pauseByCompose, setPauseByCompose] = useState(false);
+  const pullStartYRef = useRef<number | null>(null);
+
+  const handleThreadInteract = () => {
+    pausedUntilRef.current = Date.now() + INTERACTION_PAUSE_MS;
+  };
+
+  const handlePullStart = (y: number) => {
+    if (!hasMore || expanded || detailMarketId) return;
+    pullStartYRef.current = y;
+  };
+
+  const handlePullMove = (y: number) => {
+    if (!hasMore || expanded || detailMarketId) return;
+    const startY = pullStartYRef.current;
+    if (startY == null) return;
+    if (y - startY >= 40) {
+      setExpanded(true);
+      pullStartYRef.current = null;
+    }
+  };
+
+  const handlePullEnd = () => {
+    pullStartYRef.current = null;
+  };
+
+  useEffect(() => {
+    if (!hasMore || expanded || detailMarketId) {
+      if (scrollTimerRef.current) clearInterval(scrollTimerRef.current);
+      return;
+    }
+    scrollTimerRef.current = setInterval(() => {
+      if (pauseByCompose) return;
+      if (Date.now() < pausedUntilRef.current) return;
+      setScrollOffset((prev) => {
+        const max = markets.length - 1;
+        return prev >= max ? 0 : prev + 1;
+      });
+    }, PER_ITEM_MS);
+    return () => {
+      if (scrollTimerRef.current) clearInterval(scrollTimerRef.current);
+    };
+  }, [hasMore, expanded, detailMarketId, markets.length, pauseByCompose]);
+
+  const displayMarkets = hasMore
+    ? (() => {
+        const items: typeof markets = [];
+        for (let i = 0; i < MAX_VISIBLE; i++) {
+          items.push(markets[(scrollOffset + i) % markets.length]);
+        }
+        return items;
+      })()
+    : markets;
+
+  const detailMarket = detailMarketId ? markets.find((m) => m.id === detailMarketId) : null;
+
+  function openDetail(marketId: string) {
+    setDetailMarketId(marketId);
   }
 
-  const compactContent = (
-    <div className="pointer-events-auto absolute left-3 right-3 top-3 flex flex-col gap-2">
-      <div className="space-y-2">
-        {visibleMarkets.map((market) => (
-          <PredictionBlock key={market.id} market={market} />
-        ))}
-      </div>
-      {hasMore && !expanded && (
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="flex items-center justify-center gap-1 py-1.5 text-white/70 hover:text-white/90 transition touch-manipulation"
-          aria-label="Show all predictions"
-        >
-          <ChevronDown className="h-4 w-4" />
-          <span className="text-[11px]">More</span>
-        </button>
-      )}
-    </div>
-  );
+  function closeDetail() {
+    setDetailMarketId(null);
+  }
 
-  const expandedContent = expanded && hasMore ? (
-    <div
-      className="pointer-events-auto absolute inset-0 z-30 bg-black/60 flex flex-col"
-      onClick={() => setExpanded(false)}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => e.key === "Escape" && setExpanded(false)}
-      aria-label="Close full list"
-    >
-      <div
-        className="flex-1 overflow-y-auto px-3 py-4 pt-3"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="space-y-2">
-          {markets.map((market) => (
-            <PredictionBlock key={market.id} market={market} />
-          ))}
-        </div>
-      </div>
-      <div className="shrink-0 pb-6 pt-2 text-center">
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); setExpanded(false); }}
-          className="text-white/70 hover:text-white text-sm touch-manipulation"
-        >
-          Close
-        </button>
-      </div>
-    </div>
-  ) : null;
+  function closeAll() {
+    setExpanded(false);
+    setDetailMarketId(null);
+  }
 
   const pendingMarket = pendingBet ? markets.find((m) => m.id === pendingBet.marketId) : null;
 
@@ -173,10 +170,190 @@ export function LoopBetOverlay({ clipId }: LoopBetOverlayProps) {
             No predictions yet
           </p>
         </div>
-      ) : expanded && hasMore ? (
-        expandedContent
+
+      ) : detailMarket ? (
+        /* ── Detail view: same card style, just all comments shown ── */
+        <div
+          className="pointer-events-auto absolute inset-0 z-30"
+          onClick={closeDetail}
+        >
+          <div className="absolute left-3 right-3 top-3" onClick={(e) => e.stopPropagation()}>
+            {(() => {
+              const yes = detailMarket.market_sides.find((s) => s.side_key === "yes");
+              const no = detailMarket.market_sides.find((s) => s.side_key === "no");
+              return (
+                <div className="rounded-lg bg-black/55 px-2.5 py-2 shadow-md border border-primary/40">
+                  <p className="text-sm font-medium text-white/95 leading-snug line-clamp-2 mb-1.5">
+                    {cap(detailMarket.canonical_text)}
+                  </p>
+                  <div className="flex items-start gap-2">
+                    <button
+                      type="button"
+                      disabled={!canBet || !!bettingId}
+                      onClick={() => setPendingBet({ marketId: detailMarket.id, side: "yes" })}
+                      className="shrink-0 rounded-md bg-emerald-500/60 px-3 py-1.5 text-[10px] font-semibold text-white transition hover:bg-emerald-500/80 disabled:opacity-50 touch-manipulation"
+                    >
+                      Yes {yes ? yes.current_odds_decimal.toFixed(2) : ""}
+                    </button>
+                    <div className="flex-1 min-w-0 max-h-[50vh] overflow-y-auto">
+                      <PredictionThread
+                        predictionMarketId={detailMarket.id}
+                        visible
+                        mode="expanded"
+                        onInteract={handleThreadInteract}
+                        onComposeChange={setPauseByCompose}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!canBet || !!bettingId}
+                      onClick={() => setPendingBet({ marketId: detailMarket.id, side: "no" })}
+                      className="shrink-0 rounded-md bg-rose-500/60 px-3 py-1.5 text-[10px] font-semibold text-white transition hover:bg-rose-500/80 disabled:opacity-50 touch-manipulation"
+                    >
+                      No {no ? no.current_odds_decimal.toFixed(2) : ""}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+
+      ) : expanded ? (
+        /* ── Expanded list: all predictions with yes/no + comments, static ── */
+        <div
+          className="pointer-events-auto absolute inset-0 z-30 bg-black/60"
+          onClick={closeAll}
+        >
+          <div className="h-full overflow-y-auto px-3 py-4 pb-16 space-y-3">
+            {markets.map((market) => {
+              const yes = market.market_sides.find((s) => s.side_key === "yes");
+              const no = market.market_sides.find((s) => s.side_key === "no");
+              return (
+                <div
+                  key={market.id}
+                  onClick={(e) => e.stopPropagation()}
+                  className="rounded-lg bg-black/65 px-2.5 py-2.5 shadow-md border border-primary/40"
+                >
+                  <p className="text-sm font-medium text-white/95 leading-snug mb-2">
+                    {cap(market.canonical_text)}
+                  </p>
+                  <div className="flex items-start gap-2 mb-2">
+                    <button
+                      type="button"
+                      disabled={!canBet || !!bettingId}
+                      onClick={() => setPendingBet({ marketId: market.id, side: "yes" })}
+                      className="shrink-0 rounded-md bg-emerald-500/60 px-3 py-1.5 text-[10px] font-semibold text-white transition hover:bg-emerald-500/80 disabled:opacity-50 touch-manipulation"
+                    >
+                      Yes {yes ? yes.current_odds_decimal.toFixed(2) : ""}
+                    </button>
+                    <div className="flex-1 min-w-0" />
+                    <button
+                      type="button"
+                      disabled={!canBet || !!bettingId}
+                      onClick={() => setPendingBet({ marketId: market.id, side: "no" })}
+                      className="shrink-0 rounded-md bg-rose-500/60 px-3 py-1.5 text-[10px] font-semibold text-white transition hover:bg-rose-500/80 disabled:opacity-50 touch-manipulation"
+                    >
+                      No {no ? no.current_odds_decimal.toFixed(2) : ""}
+                    </button>
+                  </div>
+                  <PredictionThread
+                    predictionMarketId={market.id}
+                    visible
+                    mode="expanded"
+                    onInteract={handleThreadInteract}
+                    onComposeChange={setPauseByCompose}
+                  />
+                </div>
+              );
+            })}
+          </div>
+          {hasMore && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                closeAll();
+              }}
+              className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center justify-center gap-1 py-1 px-2.5 rounded-t-xl rounded-b-sm bg-black/50 text-white/85 hover:text-white/95 transition touch-manipulation border border-white/20 border-t-white/10 shadow-sm"
+            >
+              <ChevronDown className="h-3.5 w-3.5 rotate-180" />
+              <span className="text-[10px] font-medium">Less</span>
+            </button>
+          )}
+        </div>
+
       ) : (
-        compactContent
+        /* ── Compact view: rotating single prediction ── */
+        <div
+          className="pointer-events-auto absolute left-3 right-3 top-3 flex flex-col gap-1"
+          onTouchStart={(e) => handlePullStart(e.touches[0]?.clientY ?? 0)}
+          onTouchMove={(e) => handlePullMove(e.touches[0]?.clientY ?? 0)}
+          onTouchEnd={handlePullEnd}
+          onMouseDown={(e) => handlePullStart(e.clientY)}
+          onMouseMove={(e) => {
+            if (e.buttons === 1) handlePullMove(e.clientY);
+          }}
+          onMouseUp={handlePullEnd}
+          onMouseLeave={handlePullEnd}
+        >
+          <div className="space-y-2 overflow-hidden">
+            {displayMarkets.map((market) => {
+              const yes = market.market_sides.find((s) => s.side_key === "yes");
+              const no = market.market_sides.find((s) => s.side_key === "no");
+              return (
+                <div
+                  key={`${market.id}-${scrollOffset}`}
+                  className="animate-[slideUp_0.35s_ease-out]"
+                  onClick={() => openDetail(market.id)}
+                >
+                  <div className="rounded-lg bg-black/65 px-2.5 py-2 shadow-md border border-primary/40 cursor-pointer touch-manipulation">
+                    <p className="text-sm font-medium text-white/95 leading-snug line-clamp-2 mb-1.5">
+                      {cap(market.canonical_text)}
+                    </p>
+                    <div className="flex items-start gap-2">
+                      <button
+                        type="button"
+                        disabled={!canBet || !!bettingId}
+                        onClick={(e) => { e.stopPropagation(); setPendingBet({ marketId: market.id, side: "yes" }); }}
+                        className="shrink-0 rounded-md bg-emerald-500/60 px-3 py-1.5 text-[10px] font-semibold text-white transition hover:bg-emerald-500/80 disabled:opacity-50 touch-manipulation"
+                      >
+                        Yes {yes ? yes.current_odds_decimal.toFixed(2) : ""}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <PredictionThread
+                          predictionMarketId={market.id}
+                          visible
+                          mode="compact"
+                          onInteract={handleThreadInteract}
+                          onComposeChange={setPauseByCompose}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        disabled={!canBet || !!bettingId}
+                        onClick={(e) => { e.stopPropagation(); setPendingBet({ marketId: market.id, side: "no" }); }}
+                        className="shrink-0 rounded-md bg-rose-500/60 px-3 py-1.5 text-[10px] font-semibold text-white transition hover:bg-rose-500/80 disabled:opacity-50 touch-manipulation"
+                      >
+                        No {no ? no.current_odds_decimal.toFixed(2) : ""}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {hasMore && (
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              className="flex items-center justify-center gap-1 py-1 px-3 rounded-t-sm rounded-b-xl bg-black/50 text-white/85 hover:text-white/95 transition touch-manipulation self-center border border-white/20 border-b-white/10 shadow-sm"
+            >
+              <ChevronDown className="h-3.5 w-3.5" />
+              <span className="text-[10px] font-medium">More</span>
+            </button>
+          )}
+        </div>
       )}
 
       {pendingBet && pendingMarket && (
