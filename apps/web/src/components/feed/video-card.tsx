@@ -197,9 +197,15 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
           </Link>
         </div>
 
-        <h3 className="text-sm font-medium text-white/90 line-clamp-2">
-          {clip.story_title}
-        </h3>
+        {clip.transcript?.trim() ? (
+          <p
+            className="rounded-md bg-black/60 px-2.5 py-1.5 text-left text-sm font-medium leading-snug text-white shadow-md [text-shadow:0_1px_2px_rgba(0,0,0,0.95)] line-clamp-4"
+            role="status"
+            aria-live="polite"
+          >
+            {clip.transcript.trim()}
+          </p>
+        ) : null}
 
         <div className="flex items-center gap-2">
           {clip.genre && (

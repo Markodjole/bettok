@@ -5,7 +5,7 @@ import { execFile } from "child_process";
 import { writeFile, readFile, unlink, mkdtemp } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { getFalClient } from "@/lib/fal/server";
+import { falLongJobOptions, getFalClient } from "@/lib/fal/server";
 import { createServerClient, createServiceClient } from "@/lib/supabase/server";
 
 function logLine(jobId: string, phase: string, extra?: Record<string, unknown>) {
@@ -70,6 +70,8 @@ type EnhancedPlot = {
   scenes: MultiScene[];
   negative_prompt: string;
   outcomes: string[];
+  /** Optional subtitle line; empty if no speech implied */
+  spoken_dialogue: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -93,98 +95,95 @@ async function buildMultiScenePrompt(
     messages: [
       {
         role: "system",
-        content: `You create 3-scene video prompts for Kling AI image-to-video. The video starts from a provided image.
+        content: `You create 3-scene video prompts for Kling AI image-to-video. The video starts from a provided STILL image.
 
-BASE IMAGE shows:
+===== BASE IMAGE (the ONLY visual truth) =====
 - Subject: ${baseScene.subject}
 - State: ${baseScene.subject_state}
 - Environment: ${baseScene.environment}
 - Camera: ${baseScene.camera}
 - Textures: ${baseScene.textures}
 
-CAMERA CONSTRAINT — VERY IMPORTANT:
-You can ONLY describe what the camera angle above can actually see. If the camera shows "lower body and hands only", you CANNOT write about eyes, face, facial expressions, or anything above the waist. If the camera shows "back of subject", you CANNOT describe the subject's face. ONLY describe visual changes that are VISIBLE from the stated camera angle.
+===== WHAT KLING AI CAN AND CANNOT DO =====
+Kling AI animates an existing image. It can:
+✅ Move subjects that already exist in the image (gestures, expressions, gaze shifts, body turns)
+✅ Change lighting, shadows, atmosphere, weather
+✅ Move the camera (push-in, pull-out, pan, tilt, rack focus)
+✅ Add subtle environmental motion (wind, ripples, dust)
 
-The user provides a short "plot change" — something that happens to the subject. You must:
-1. UNDERSTAND USER INTENT, not just their literal words. Fix grammar, spelling, illogical sequences. Figure out what the user actually WANTED to show, not what they literally typed.
-   Example: "vw beetle breaks slowley and stops to the red light. then Turn on the hazard lights, and red light turns to yellow and then green" → the user wants: car waiting at red light, hazard lights blinking, tension about when the light will change. The light CHANGING is the resolution — don't show it.
-2. Determine the EMOTIONAL TONE of the scenario (see below)
-3. IDENTIFY THE RESOLUTION in the user's prompt. The resolution is the FINAL OUTCOME the viewer would bet on. NEVER show it. Examples:
-   - "light turns green" → light changing IS the resolution → show only the red light with tension building
-   - "ball goes in the hole" → ball entering IS the resolution → show only the ball rolling
-   - "cat eats the food" → eating IS the resolution → show only the cat looking at food
-4. Rewrite the user's prompt so that the RESOLUTION IS PUSHED TO THE VERY END — the video should be all buildup, with the decisive moment happening as late as possible
+It CANNOT:
+❌ Create new objects that don't exist in the image (dartboards, cups, balls, food, signs, furniture, vehicles, weapons, tools, instruments, other people)
+❌ Change the setting/location (if image is indoors, it stays indoors)
+❌ Show text, speech bubbles, or on-screen words
+❌ Reliably show complex multi-step actions in 2 seconds
 
-REWRITING THE USER'S PROMPT — CRITICAL:
-Your job is to SLOW DOWN the action. Whatever the user describes, stretch it out cinematically:
-- If user says "golfer hits ball toward hole" → the swing should happen late in scene 2, and the ball should STILL BE ROLLING at the end of scene 3 — far from the hole
-- If user says "kid chooses a drink" → the hand should still be hovering at end of scene 3
-- PUSH the outcome as far into the future as possible. Fill scenes with slow buildup: breathing, micro-adjustments, camera movements, atmosphere
-- The decisive moment (ball reaching hole, finger touching button, object landing) must NOT happen within the 6 seconds
+===== STEP 1: FEASIBILITY CHECK (do this FIRST) =====
+Compare the user's plot against the BASE IMAGE. List every object, person, or prop the user mentions. For EACH one, ask: "Is this already visible in the base image?" If NOT → you MUST remove it from your prompts and adapt the scene to only use what exists.
 
-NO NEW VISUAL ELEMENTS — CRITICAL:
-NEVER add objects, people, or elements that are NOT described in the BASE IMAGE above.
-- If the image shows a car on an empty road, do NOT add pedestrians, cyclists, other cars, signs, or extra traffic lights
-- Kling AI cannot reliably create new objects — they appear distorted, wrong, or nonsensical
-- You may ONLY describe elements that already exist in the image + the specific change from the user's plot
-- Environmental changes are OK (lighting shifts, shadows, weather), but new physical objects are NOT
+Example: Base image = "man facing camera, arms crossed, plain wall behind."
+User says: "he throws darts at a dartboard, hits 20, 3, triple 17"
+→ DARTBOARD is NOT in the image. DARTS are NOT in the image.
+→ You CANNOT show dart-throwing or a dartboard with scores.
+→ Adapt: show the man's focused expression, determined gaze, a confident nod, camera push-in on his face as he prepares mentally. The ANTICIPATION of what's about to happen — not the action itself.
 
-NO INVENTED MOVEMENT — CRITICAL:
-NEVER add physical movement (steps forward, leaning, reaching, walking, crawling, unfolding, approaching) that the user did NOT describe.
-- If the user says "deciding" or "looking" → that means EYES and EXPRESSION only, NOT body/position changes
-- The subject's POSITION in the frame must stay the same unless the user explicitly says the subject moves
-- "Deciding" = gaze shifts, blinks, ear twitches, subtle expression changes. NOT leaning, stepping, approaching
-- Words like "motion begins to unfold", "action builds", "motion carries forward" are BANNED unless describing a specific user-requested action
-- Scene 3 should NEVER contain new motion. It is a held moment of uncertainty — nothing progresses
-- Only OTHER objects/characters can enter the scene IF the user's plot describes them — the main subject stays put unless told otherwise
+ALWAYS adapt the user's intent to what's ACTUALLY POSSIBLE from the starting image. Capture the FEELING and BUILDUP, not the literal action if it requires missing objects.
 
-NO ACTION TOWARD OPTIONS — ABSOLUTE RULE:
-For betting clips, options must be PRESENTED, not ACTED ON.
-- Never generate: reaching, touching, grabbing, pressing, opening, picking up, sipping, biting, stepping toward an option
-- Never generate "hand hovering over option" or "fingers about to touch"
-- The subject may LOOK at options, react emotionally, or shift gaze between options
-- The subject must remain physically neutral relative to options (no approach motion)
+===== STEP 2: INTERPRET USER INTENT =====
+1. UNDERSTAND what the user WANTS to convey — the emotion, the story beat, the tension.
+2. Fix grammar, spelling, illogical sequences.
+3. IDENTIFY THE RESOLUTION (the final outcome viewers bet on). NEVER show it.
+4. SLOW DOWN the action. Push resolution as far into the future as possible.
 
-EMOTIONAL TONE — CRITICAL:
-Match the mood to the actual scenario. NOT everything is dramatic or scary.
-- Choosing a dress, picking food, casual decisions → PLAYFUL, lighthearted, fun, curious, amused
-- Danger, cracks, falling, breaking → TENSE, suspenseful, fearful
-- Sports, competition → FOCUSED, determined, concentrated
-- Nature, animals → NATURAL, instinctive, alert
-NEVER use fear/tension/anxiety words for lighthearted scenarios.
+===== CAMERA CONSTRAINT =====
+ONLY describe what the camera angle from the base image can see. If camera = "medium shot, upper body" → you cannot describe feet or full room. If camera = "back of subject" → you cannot describe facial expressions.
 
-SCENE CONTINUITY — CRITICAL:
-Kling AI processes each scene prompt semi-independently. To get smooth video across scenes, follow these rules:
+===== NO NEW VISUAL ELEMENTS — ABSOLUTE =====
+NEVER mention objects that are NOT in the base image. This is the #1 cause of bad videos.
+- If the user asks for "throwing darts" but there's no dartboard → show the subject's PREPARATION and FOCUS, not the throw
+- If the user asks for "choosing between drinks" but there are no drinks → show the subject looking at something off-camera with curiosity
+- Environmental changes (lighting, shadows) are OK. New physical objects are NOT.
+- When adapting, explain what you changed in "enhanced_plot"
 
-1. ONLY DESCRIBE MOTION THE USER ASKED FOR. If the user described a conversation, subjects stay still — only faces and expressions change. If the user described a physical action (throwing, swinging), describe that action. NEVER invent movement (walking, stepping, leaning, approaching, reaching) that the user did not mention.
+===== NO INVENTED MOVEMENT =====
+NEVER add physical movement the user did NOT describe.
+- "deciding" or "looking" = EYES and EXPRESSION only, NOT body changes
+- Subject's POSITION stays the same unless user explicitly says they move
+- Scene 3: NEVER add new motion. Held moment. Frozen uncertainty.
 
-2. KEEP SUBJECTS STATIONARY unless the user's plot explicitly requires them to move. Subjects hold their positions from the starting image. Camera, lighting, and ambient environment may change.
+===== NO ACTION TOWARD OPTIONS =====
+Options must be PRESENTED, not ACTED ON. Subject may LOOK at options, react emotionally — never reach, touch, grab, press, or approach.
 
-3. SCENE 3 = FREEZE. Scene 3 should hold the same visual state as scene 2's end. Nothing new happens. Use "same position", "still", "held" language. The video should feel like time has paused right before a decision.
+===== EMOTIONAL TONE =====
+Match mood to scenario:
+- Casual/fun → PLAYFUL, lighthearted, curious
+- Danger → TENSE, suspenseful
+- Sports/competition → FOCUSED, determined
+- Nature → NATURAL, alert
 
-4. USE CAMERA for drama, not body movement. Slow push-in, rack focus, angle change — these create tension without moving subjects around.
+===== SCENE RULES =====
+- Scene 1 (2s): Subject exactly as in image. Ambient motion only (light, breathing). Camera holds steady.
+- Scene 2 (2s): ONLY what's possible from the image + user's adapted plot. Camera may slowly push in. ONE simple action maximum.
+- Scene 3 (2s): FREEZE. Same state as scene 2 end. Nothing new. "Same position, still, held." Only camera/light may change.
+- Each scene: 60 words max. ONLY what's visible from the stated camera angle.
+- CRITICAL: If user described multiple actions (throw, show board, show scores, close-up), pick the SINGLE most cinematic moment that's possible from the image and build ALL 3 scenes around that one beat.
 
-RULES:
-- Scene 1 (2s): The subject exactly as shown in the image. Only ambient environmental change (light, shadows). NO body/position movement unless user described it. Camera holds steady.
-- Scene 2 (2s): What the user described happens — and NOTHING MORE. If user described dialogue, show facial expressions only. If user described physical action, show only that action. Camera may slowly push in.
-- Scene 3 (2s): Scene 2 state continues. Subjects stay in the SAME positions. NO new actions, NO forward motion, NO "unfolding". The moment is FROZEN in uncertainty. Only camera or ambient light may change.
-- Each scene: 60 words max. ONLY describe what is visible from the camera angle.
-- Use camera terms: slow push-in, gentle rack focus, camera holds, slight drift
-- Include 3 possible outcomes the viewer could bet on
-- CRITICAL: Scene 3 must NOT add any motion, approach, or progression that scene 2 didn't already show. It should feel like a held breath.
+===== NEGATIVE PROMPT =====
+MUST include: "outcome revealed, result shown, action completed, decision finished, object reaching destination, sudden jump, jerky motion, reaching toward option, touching option, grabbing option, pressing button, opening item, picking item, hand hovering over option"
+ALSO add any objects the user mentioned that DON'T exist in the image: e.g. "dartboard, darts, scoreboard" etc.
 
-NEGATIVE PROMPT MUST ALWAYS INCLUDE: "outcome revealed, result shown, action completed, decision finished, object reaching destination, sudden jump, jerky motion, reaching toward option, touching option, grabbing option, pressing button, opening item, picking item, hand hovering over option"
-
+===== OUTPUT FORMAT =====
 Return JSON:
 {
   "scene_summary": "one sentence describing the full clip",
-  "mood": "the emotional tone: playful / tense / focused / curious / etc.",
-  "enhanced_plot": "your rewritten version that SLOWS DOWN the action (1-2 sentences)",
-  "scene_1": "scene 1 prompt (subtle living motion, 60 words max)",
-  "scene_2": "scene 2 prompt (action begins flowing from scene 1, 60 words max)",
-  "scene_3": "scene 3 prompt (action continues unbroken from scene 2, unresolved, 60 words max)",
-  "negative_prompt": "things to avoid — MUST include outcome/resolution + motion jump terms",
-  "outcomes": ["outcome A", "outcome B", "outcome C"]
+  "mood": "the emotional tone",
+  "feasibility_notes": "list objects/actions from user input that are NOT in the image and how you adapted",
+  "enhanced_plot": "your adapted version that only uses what's in the image (1-2 sentences)",
+  "scene_1": "scene 1 prompt (60 words max)",
+  "scene_2": "scene 2 prompt (60 words max)",
+  "scene_3": "scene 3 prompt (60 words max)",
+  "negative_prompt": "things to avoid — include missing objects + standard terms",
+  "outcomes": ["outcome A", "outcome B", "outcome C"],
+  "spoken_dialogue": "If the user's plot or your adapted scene clearly implies characters speaking (quoted words, 'says', 'whispers', etc.), write ONE short subtitle line (max 120 chars), no quotes. Otherwise empty string."
 }`,
       },
       {
@@ -199,8 +198,13 @@ Return JSON:
 
   try {
     const parsed = JSON.parse(raw);
+    if (parsed.feasibility_notes) {
+      logLine("llm", "feasibility", { notes: parsed.feasibility_notes, enhanced_plot: parsed.enhanced_plot });
+    }
     const hardNegative =
       "outcome revealed, result shown, action completed, decision finished, object reaching destination, sudden jump, jerky motion, reaching toward option, touching option, grabbing option, pressing button, opening item, picking item, hand hovering over option";
+    const spoken =
+      typeof parsed.spoken_dialogue === "string" ? parsed.spoken_dialogue.trim().slice(0, 120) : "";
     return {
       scene_summary: parsed.scene_summary || userPlotChange,
       scenes: [
@@ -210,6 +214,7 @@ Return JSON:
       ],
       negative_prompt: `${parsed.negative_prompt || ""}, ${hardNegative}`.replace(/^,\s*/, ""),
       outcomes: parsed.outcomes || [],
+      spoken_dialogue: spoken,
     };
   } catch {
     return null;
@@ -219,6 +224,7 @@ Return JSON:
 function buildFallbackScenes(baseScene: BaseScene, userPlotChange: string): EnhancedPlot {
   return {
     scene_summary: `${baseScene.subject} — ${userPlotChange}`,
+    spoken_dialogue: "",
     scenes: [
       {
         prompt: `${baseScene.subject}, ${baseScene.subject_state}, ${baseScene.environment}. Camera holds steady. No movement, no action.`,
@@ -398,12 +404,16 @@ async function checkAndClearStaleJobs(serviceClient: any, userId: string) {
   if (existing && existing.length > 0) {
     const job = existing[0] as any;
     const ageMs = Date.now() - new Date(job.created_at).getTime();
-    if (ageMs < 5 * 60 * 1000) {
+    if (ageMs < 15 * 60 * 1000) {
       return { blocked: true };
     }
     await serviceClient
       .from("clip_generation_jobs")
-      .update({ status: "failed", error_message: "Timed out", updated_at: new Date().toISOString() })
+      .update({
+        status: "failed",
+        error_message: "Previous generation exceeded wait limit; start a new one.",
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", job.id);
   }
   return { blocked: false };
@@ -464,6 +474,7 @@ async function runGeneration(opts: {
     });
 
     const video = await fal.subscribe("fal-ai/kling-video/v3/pro/image-to-video", {
+      ...falLongJobOptions,
       input: {
         start_image_url: patternImageUrl,
         multi_prompt: enhanced.scenes.map((s: MultiScene) => ({ prompt: s.prompt, duration: s.duration })),
@@ -661,6 +672,12 @@ export async function publishDraft(input: {
     .single();
   if (storyErr || !story) return { error: "Failed to create story" };
 
+  const llm = (input.llmGeneration || {}) as { spoken_dialogue?: string };
+  const transcript =
+    typeof llm.spoken_dialogue === "string" && llm.spoken_dialogue.trim()
+      ? llm.spoken_dialogue.trim().slice(0, 500)
+      : null;
+
   const { data: clipNode, error: clipErr } = await serviceClient
     .from("clip_nodes")
     .insert({
@@ -673,6 +690,7 @@ export async function publishDraft(input: {
       first_frame_storage_path: input.imageStoragePath,
       llm_generation_json: input.llmGeneration,
       scene_summary: input.sceneSummary,
+      transcript,
       published_at: now,
       betting_deadline: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),
     })
@@ -725,6 +743,7 @@ export async function improveVideo(input: {
       .eq("id", input.jobId);
 
     const result = await fal.subscribe("fal-ai/kling-video/o1/video-to-video/edit", {
+      ...falLongJobOptions,
       input: {
         prompt: input.feedback,
         video_url: falVideoUrl,

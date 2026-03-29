@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import { getFalClient } from "@/lib/fal/server";
+import { falLongJobOptions, getFalClient } from "@/lib/fal/server";
 import { createServerClient, createServiceClient } from "@/lib/supabase/server";
 import { planScene, scoreGeneratedFrame } from "./scene-planner";
 import type { SceneState } from "./scene-planner";
@@ -42,42 +42,60 @@ async function analyzeClipFrames(
   firstFrameUrl: string,
   endFrameUrl: string,
   sceneSummary: string,
-): Promise<string | null> {
+): Promise<{ analysis: string | null; spokenDialogue: string | null }> {
   const apiKey = process.env.LLM_API_KEY;
-  if (!apiKey || process.env.LLM_PROVIDER !== "openai") return null;
+  if (!apiKey || process.env.LLM_PROVIDER !== "openai") {
+    return { analysis: null, spokenDialogue: null };
+  }
 
   const { default: OpenAI } = await import("openai");
   const client = new OpenAI({ apiKey });
 
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",
+    response_format: { type: "json_object" },
     messages: [
       {
         role: "system",
         content:
-          "You are a video scene analyst for a prediction-betting platform. " +
-          "Describe what is happening in these two frames (start frame and end frame) of a short clip. " +
-          "Focus on: subjects visible, their positions, what choices/options are present, " +
-          "the state of tension/action, and what outcome is still unresolved. " +
-          "Keep it factual, 2-4 sentences. This analysis will be used to calculate betting odds.",
+          "You analyze two frames (start and end) of a short vertical video for a prediction app. " +
+          "Return JSON with keys: " +
+          '"scene_analysis" (string, 2-4 sentences): subjects, positions, options/tension, unresolved outcome — factual. ' +
+          '"spoken_dialogue" (string or null): ONLY if a person clearly appears to be speaking (mouth open mid-speech, direct address) or the scene context strongly implies a spoken line you can infer in one short subtitle (max 120 chars). ' +
+          "If no speech is suggested, use null. Do not invent dialogue that contradicts the scene.",
       },
       {
         role: "user",
         content: [
-          { type: "text", text: `Scene context: ${sceneSummary}\n\nDescribe what you see in these two frames:` },
+          {
+            type: "text",
+            text: `Scene context: ${sceneSummary}\n\nAnalyze both frames and return JSON only.`,
+          },
           { type: "image_url", image_url: { url: firstFrameUrl, detail: "low" } },
           { type: "image_url", image_url: { url: endFrameUrl, detail: "low" } },
         ],
       },
     ],
-    max_tokens: 200,
+    max_tokens: 350,
   });
 
-  const text = response.choices[0]?.message?.content?.trim() ?? null;
+  const raw = response.choices[0]?.message?.content?.trim();
   console.log(
-    `[vision] tokens=${response.usage?.total_tokens ?? 0} analysis="${text?.slice(0, 80)}..."`,
+    `[vision] tokens=${response.usage?.total_tokens ?? 0} raw="${raw?.slice(0, 100)}..."`,
   );
-  return text;
+  if (!raw) return { analysis: null, spokenDialogue: null };
+  try {
+    const parsed = JSON.parse(raw) as { scene_analysis?: string; spoken_dialogue?: string | null };
+    const analysis =
+      typeof parsed.scene_analysis === "string" ? parsed.scene_analysis.trim() : null;
+    let spoken: string | null =
+      typeof parsed.spoken_dialogue === "string" ? parsed.spoken_dialogue.trim() : null;
+    if (spoken && (spoken.toLowerCase() === "none" || spoken.toLowerCase() === "null")) spoken = null;
+    if (spoken && spoken.length > 500) spoken = spoken.slice(0, 500);
+    return { analysis: analysis || null, spokenDialogue: spoken };
+  } catch {
+    return { analysis: raw, spokenDialogue: null };
+  }
 }
 
 function getStyleFusion(input: { genre: string; tone: string; realismLevel: string }) {
@@ -312,6 +330,7 @@ export async function generateAiClipFromBlueprint(input: {
       try {
         if (useKlingImages) {
           const first = await fal.subscribe(klingTextToImageModelKey, {
+            ...falLongJobOptions,
             input: {
               prompt: currentFirstPrompt,
               aspect_ratio: "9:16",
@@ -338,6 +357,7 @@ export async function generateAiClipFromBlueprint(input: {
         } else {
           // Flux fallback
           const first = await fal.subscribe(fluxTextToImageModelKey, {
+            ...falLongJobOptions,
             input: { prompt: currentFirstPrompt, image_size: "portrait_16_9" },
             logs: true,
             onQueueUpdate: (u) => logLine(jobId, "first_frame.queue", { status: (u as any)?.status ?? "unknown" }),
@@ -410,6 +430,7 @@ export async function generateAiClipFromBlueprint(input: {
         const END_FRAME_STRENGTH = 0.6;
         const strength = attempt === 0 ? END_FRAME_STRENGTH : END_FRAME_STRENGTH + 0.15;
         const end = await fal.subscribe(fluxImageToImageModelKey, {
+          ...falLongJobOptions,
           input: {
             prompt: currentEndPrompt,
             image_url: firstUrl,
@@ -443,6 +464,7 @@ export async function generateAiClipFromBlueprint(input: {
     let video: any;
     try {
       video = await fal.subscribe("fal-ai/kling-video/v3/pro/image-to-video", {
+        ...falLongJobOptions,
         input: {
           start_image_url: firstUrl,
           end_image_url: endUrl,
@@ -459,6 +481,7 @@ export async function generateAiClipFromBlueprint(input: {
       logLine(jobId, "video.retry", { reason: message, mode: "single_prompt_start_only" });
       if (!message.toLowerCase().includes("unprocessable")) throw videoErr;
       video = await fal.subscribe("fal-ai/kling-video/v3/pro/image-to-video", {
+        ...falLongJobOptions,
         input: {
           start_image_url: firstUrl,
           prompt: expanded.video_prompt,
@@ -530,17 +553,23 @@ export async function generateAiClipFromBlueprint(input: {
     // Vision analysis of generated frames (non-blocking — failures won't break generation)
     try {
       logLine(jobId, "vision_analysis.start");
-      const analysisText = await analyzeClipFrames(
+      const { analysis, spokenDialogue } = await analyzeClipFrames(
         firstUrl!,
         endUrl!,
         expanded.scene_summary,
       );
-      if (analysisText) {
+      if (analysis || spokenDialogue) {
         await serviceClient
           .from("clip_nodes")
-          .update({ video_analysis_text: analysisText })
+          .update({
+            ...(analysis ? { video_analysis_text: analysis } : {}),
+            ...(spokenDialogue ? { transcript: spokenDialogue } : {}),
+          })
           .eq("id", (clipNode as any).id);
-        logLine(jobId, "vision_analysis.done", { length: analysisText.length });
+        logLine(jobId, "vision_analysis.done", {
+          analysisLen: analysis?.length ?? 0,
+          transcript: spokenDialogue ? spokenDialogue.slice(0, 60) : null,
+        });
       }
     } catch (visionErr: any) {
       logLine(jobId, "vision_analysis.failed", { message: visionErr?.message });

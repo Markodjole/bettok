@@ -23,7 +23,7 @@ import {
 import { createBrowserClient, getUserQueued } from "@/lib/supabase/client";
 import { cn, getMediaUrl } from "@/lib/utils";
 
-const PATTERNS_CACHE_KEY = "create:image_patterns:v1";
+const PATTERNS_CACHE_KEY = "create:image_patterns:v2";
 const PATTERNS_CACHE_TTL_MS = 10 * 60 * 1000;
 const CREATE_REVIEW_CACHE_KEY = "create:pending_review:v1";
 
@@ -446,7 +446,7 @@ export default function CreatePage() {
     solo_shopper_aisle: "e.g. reaches for a jar but notices something on the top shelf",
     couple_grocery: "e.g. she reads the label and frowns, he points at another option",
     golf_putt: "e.g. wind picks up, ball starts rolling before the swing",
-    roller_skater: "e.g. a crack in the road appears ahead, she notices too late",
+    fluffy_kitten: "e.g. a hand offers food; kitten looks at food then camera, undecided",
   };
 
   const plotPlaceholder = selectedPattern
