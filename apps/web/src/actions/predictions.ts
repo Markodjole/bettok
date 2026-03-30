@@ -8,6 +8,7 @@ import {
   ODDS_SYSTEM_PROMPT,
   mockGenerateOdds,
 } from "@bettok/story-engine";
+import { getContinuationContext } from "@/video-intelligence/pipeline";
 
 export async function submitPrediction(input: {
   clip_node_id: string;
@@ -111,6 +112,27 @@ export async function submitPrediction(input: {
         : [];
       const outcomes = (llmJson?.outcomes as string[]) ?? allSuggestedOutcomes;
 
+      // Try to include structured video analysis for better odds
+      let videoContext: Record<string, unknown> | null = null;
+      try {
+        const ctx = await getContinuationContext(input.clip_node_id);
+        if (ctx) {
+          videoContext = {
+            main_story: ctx.mainStory,
+            current_state: ctx.currentStateSummary,
+            characters: ctx.characters.map((c) => ({ label: c.label, clothing: c.clothingTop, emotion: c.dominantEmotion })),
+            objects: ctx.objects.map((o) => ({ label: o.label, category: o.category, state: o.state, brand: o.brandOrTextVisible })),
+            visible_text: ctx.environment.visibleText,
+            available_options: ctx.availableOptions.map((o) => ({ label: o.label, source: o.source })),
+            next_step_candidates: ctx.nextStepCandidates.map((n) => ({ action: n.label, probability: n.probabilityScore })),
+            preference_signals: ctx.preferenceSignals.map((p) => ({ domain: p.domain, value: p.value, basis: p.basis })),
+            unresolved_questions: ctx.unresolvedQuestions,
+          };
+        }
+      } catch {
+        // video analysis may not be ready yet
+      }
+
       const clipContext = {
         scene_summary: clipFull?.scene_summary ?? "Unknown scene",
         genre: clipFull?.genre ?? "unknown",
@@ -118,6 +140,7 @@ export async function submitPrediction(input: {
         scene_prompts_used: scenePrompts,
         designed_outcomes: outcomes,
         video_analysis: (clipFull as Record<string, unknown>)?.video_analysis_text ?? null,
+        structured_video_analysis: videoContext,
         enhanced_plot: llmJson?.enhanced_plot ?? null,
         negative_prompt: llmJson?.negative_prompt ?? null,
         existing_predictions: (existingMarkets || []).map((m) => (m as Record<string, unknown>).canonical_text),
@@ -125,8 +148,18 @@ export async function submitPrediction(input: {
         market_key: normalized.market_key,
       };
 
+      const oddsSystemEnhancement = videoContext
+        ? `\n\nIMPORTANT: You also have "structured_video_analysis" with observed facts from the actual video pixels. This is MORE RELIABLE than scene_summary or prompts. Use it to:
+- Check what objects/options are actually visible (not just what prompts intended)
+- Check character state and likely intent
+- Check available options and their source (visible vs inferred)
+- Use next_step_candidates probabilities as a BASELINE, then adjust for the specific prediction
+- Use preference_signals to assess likelihood of specific choices
+- Economic consistency: visible objects/setting indicate price range and lifestyle`
+        : "";
+
       const messages = [
-        { role: "system" as const, content: ODDS_SYSTEM_PROMPT + "\n\nReturn a single JSON object (not an array) for this one prediction." },
+        { role: "system" as const, content: ODDS_SYSTEM_PROMPT + oddsSystemEnhancement + "\n\nReturn a single JSON object (not an array) for this one prediction." },
         { role: "user" as const, content: JSON.stringify(clipContext) },
       ];
 

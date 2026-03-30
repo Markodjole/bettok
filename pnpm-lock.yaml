@@ -29,6 +29,9 @@ importers:
       '@bettok/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@bettok/fair-selection':
+        specifier: workspace:*
+        version: link:../../packages/fair-selection
       '@bettok/story-engine':
         specifier: workspace:*
         version: link:../../packages/story-engine
@@ -197,6 +200,15 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.47.0
         version: 2.99.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
+  packages/fair-selection:
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

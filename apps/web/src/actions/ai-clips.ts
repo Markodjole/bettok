@@ -589,6 +589,11 @@ export async function generateAiClipFromBlueprint(input: {
       .eq("id", (job as any).id);
 
     logLine(jobId, "completed", { totalMs: Date.now() - startedAt, clipId: (clipNode as any).id });
+
+    import("@/video-intelligence/pipeline")
+      .then((m) => m.analyzeClipVideo(String((clipNode as any).id)))
+      .catch(() => {});
+
     revalidatePath("/feed");
     return { data: { clipId: (clipNode as any).id } };
   } catch (e: any) {

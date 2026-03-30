@@ -7,6 +7,8 @@ export const continuationOutputSchema = z.object({
   partially_matched: z.array(z.string()),
   media_prompt: z.string(),
   scene_explanation: z.string(),
+  video_prompt: z.string().optional(),
+  negative_prompt: z.string().optional(),
 });
 
 export type ContinuationOutput = z.infer<typeof continuationOutputSchema>;

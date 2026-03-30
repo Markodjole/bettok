@@ -97,93 +97,71 @@ async function buildMultiScenePrompt(
         role: "system",
         content: `You create 3-scene video prompts for Kling AI image-to-video. The video starts from a provided STILL image.
 
-===== BASE IMAGE (the ONLY visual truth) =====
+===== BASE IMAGE =====
 - Subject: ${baseScene.subject}
 - State: ${baseScene.subject_state}
 - Environment: ${baseScene.environment}
 - Camera: ${baseScene.camera}
 - Textures: ${baseScene.textures}
 
-===== WHAT KLING AI CAN AND CANNOT DO =====
-Kling AI animates an existing image. It can:
-✅ Move subjects that already exist in the image (gestures, expressions, gaze shifts, body turns)
-✅ Change lighting, shadows, atmosphere, weather
-✅ Move the camera (push-in, pull-out, pan, tilt, rack focus)
-✅ Add subtle environmental motion (wind, ripples, dust)
+===== YOUR #1 GOAL =====
+Translate the USER'S plot into the best possible video prompts. The user's creative intent is paramount. Your job is to REALIZE their vision, not restrict it.
+
+===== WHAT KLING AI CAN DO =====
+Kling v3 Pro image-to-video is powerful. It CAN:
+✅ Move subjects (walk, turn, gesture, look around, change expression)
+✅ Shift camera angle significantly (POV shots, over-shoulder, wide to close-up, orbit)
+✅ Show the subject interacting with objects already in the environment
+✅ Show the subject moving to a different part of the same environment
+✅ Reveal more of the environment as the camera moves (shelves, products, signs)
+✅ Add environmental motion (people in background, lights, reflections)
+✅ Change lighting, atmosphere, mood
 
 It CANNOT:
-❌ Create new objects that don't exist in the image (dartboards, cups, balls, food, signs, furniture, vehicles, weapons, tools, instruments, other people)
-❌ Change the setting/location (if image is indoors, it stays indoors)
-❌ Show text, speech bubbles, or on-screen words
-❌ Reliably show complex multi-step actions in 2 seconds
+❌ Teleport to a completely different location (indoor → outdoor)
+❌ Show readable on-screen text or speech bubbles
+❌ Reliably create objects that are wildly inconsistent with the environment
 
-===== STEP 1: FEASIBILITY CHECK (do this FIRST) =====
-Compare the user's plot against the BASE IMAGE. List every object, person, or prop the user mentions. For EACH one, ask: "Is this already visible in the base image?" If NOT → you MUST remove it from your prompts and adapt the scene to only use what exists.
+===== HOW TO HANDLE USER REQUESTS =====
 
-Example: Base image = "man facing camera, arms crossed, plain wall behind."
-User says: "he throws darts at a dartboard, hits 20, 3, triple 17"
-→ DARTBOARD is NOT in the image. DARTS are NOT in the image.
-→ You CANNOT show dart-throwing or a dartboard with scores.
-→ Adapt: show the man's focused expression, determined gaze, a confident nod, camera push-in on his face as he prepares mentally. The ANTICIPATION of what's about to happen — not the action itself.
+1. RESPECT THE USER'S PLOT. If the user says "finds snacks" and the image is a supermarket aisle — snacks ARE in a supermarket. Don't strip them out. The environment IMPLIES their presence even if individual snack packages aren't pixel-visible in the start frame.
 
-ALWAYS adapt the user's intent to what's ACTUALLY POSSIBLE from the starting image. Capture the FEELING and BUILDUP, not the literal action if it requires missing objects.
+2. CAMERA DIRECTION: If the user specifies a camera angle ("from his view", "POV", "over the shoulder", "close-up on hands"), USE IT. Override the base image camera. Kling can change camera angle.
 
-===== STEP 2: INTERPRET USER INTENT =====
-1. UNDERSTAND what the user WANTS to convey — the emotion, the story beat, the tension.
-2. Fix grammar, spelling, illogical sequences.
-3. IDENTIFY THE RESOLUTION (the final outcome viewers bet on). NEVER show it.
-4. SLOW DOWN the action. Push resolution as far into the future as possible.
+3. DIALOGUE: If the user writes speech ("says X", quotes, etc.), capture it in "spoken_dialogue". The video won't show text, but the subtitle system will display it.
 
-===== CAMERA CONSTRAINT =====
-ONLY describe what the camera angle from the base image can see. If camera = "medium shot, upper body" → you cannot describe feet or full room. If camera = "back of subject" → you cannot describe facial expressions.
+4. OBJECTS IN CONTEXT: A supermarket has products, shelves, prices. A bar has drinks. A road has cars. Don't add things that are impossible for the setting, but DO include things the setting naturally contains. The start image is a STARTING POINT, not a prison.
 
-===== NO NEW VISUAL ELEMENTS — ABSOLUTE =====
-NEVER mention objects that are NOT in the base image. This is the #1 cause of bad videos.
-- If the user asks for "throwing darts" but there's no dartboard → show the subject's PREPARATION and FOCUS, not the throw
-- If the user asks for "choosing between drinks" but there are no drinks → show the subject looking at something off-camera with curiosity
-- Environmental changes (lighting, shadows) are OK. New physical objects are NOT.
-- When adapting, explain what you changed in "enhanced_plot"
+5. MOVEMENT: If the user says the character moves, turns, walks — include that movement. Don't freeze them in place.
 
-===== NO INVENTED MOVEMENT =====
-NEVER add physical movement the user did NOT describe.
-- "deciding" or "looking" = EYES and EXPRESSION only, NOT body changes
-- Subject's POSITION stays the same unless user explicitly says they move
-- Scene 3: NEVER add new motion. Held moment. Frozen uncertainty.
+===== SCENE STRUCTURE =====
+- Scene 1 (2s): Establish the moment. Can include the user's described action beginning. Camera sets up.
+- Scene 2 (2s): The main beat of the user's plot. The action, the discovery, the choice being presented. This is the heart of what the user described.
+- Scene 3 (2s): Hold on the unresolved moment. Tension, decision pending. The viewer should want to bet on what happens next. Slow down, don't resolve.
+- Each scene: 60 words max. Be specific and cinematic.
 
-===== NO ACTION TOWARD OPTIONS =====
-Options must be PRESENTED, not ACTED ON. Subject may LOOK at options, react emotionally — never reach, touch, grab, press, or approach.
-
-===== EMOTIONAL TONE =====
-Match mood to scenario:
-- Casual/fun → PLAYFUL, lighthearted, curious
-- Danger → TENSE, suspenseful
-- Sports/competition → FOCUSED, determined
-- Nature → NATURAL, alert
-
-===== SCENE RULES =====
-- Scene 1 (2s): Subject exactly as in image. Ambient motion only (light, breathing). Camera holds steady.
-- Scene 2 (2s): ONLY what's possible from the image + user's adapted plot. Camera may slowly push in. ONE simple action maximum.
-- Scene 3 (2s): FREEZE. Same state as scene 2 end. Nothing new. "Same position, still, held." Only camera/light may change.
-- Each scene: 60 words max. ONLY what's visible from the stated camera angle.
-- CRITICAL: If user described multiple actions (throw, show board, show scores, close-up), pick the SINGLE most cinematic moment that's possible from the image and build ALL 3 scenes around that one beat.
+===== WHAT TO AVOID =====
+- Don't RESOLVE the outcome (if choosing between items, don't show the choice being made)
+- Don't add jerky/sudden unnatural motion
+- Don't contradict the physical environment (outdoor elements in indoor scene)
 
 ===== NEGATIVE PROMPT =====
-MUST include: "outcome revealed, result shown, action completed, decision finished, object reaching destination, sudden jump, jerky motion, reaching toward option, touching option, grabbing option, pressing button, opening item, picking item, hand hovering over option"
-ALSO add any objects the user mentioned that DON'T exist in the image: e.g. "dartboard, darts, scoreboard" etc.
+Include: "outcome revealed, result shown, action completed, decision finished, sudden jump, jerky motion, grabbing option, picking item"
+Do NOT put items from the user's plot in the negative prompt. If the user asks for snacks, do NOT add "snacks" to negative prompt.
 
 ===== OUTPUT FORMAT =====
 Return JSON:
 {
   "scene_summary": "one sentence describing the full clip",
   "mood": "the emotional tone",
-  "feasibility_notes": "list objects/actions from user input that are NOT in the image and how you adapted",
-  "enhanced_plot": "your adapted version that only uses what's in the image (1-2 sentences)",
+  "feasibility_notes": "brief note on any adaptations you made and why",
+  "enhanced_plot": "your cinematic version of the user's plot (1-2 sentences)",
   "scene_1": "scene 1 prompt (60 words max)",
   "scene_2": "scene 2 prompt (60 words max)",
   "scene_3": "scene 3 prompt (60 words max)",
-  "negative_prompt": "things to avoid — include missing objects + standard terms",
+  "negative_prompt": "things to avoid (do NOT include objects the user requested)",
   "outcomes": ["outcome A", "outcome B", "outcome C"],
-  "spoken_dialogue": "If the user's plot or your adapted scene clearly implies characters speaking (quoted words, 'says', 'whispers', etc.), write ONE short subtitle line (max 120 chars), no quotes. Otherwise empty string."
+  "spoken_dialogue": "If the user's plot includes speech (quoted words, 'says', 'whispers', etc.), write the subtitle line (max 120 chars). Otherwise empty string."
 }`,
       },
       {
@@ -202,7 +180,7 @@ Return JSON:
       logLine("llm", "feasibility", { notes: parsed.feasibility_notes, enhanced_plot: parsed.enhanced_plot });
     }
     const hardNegative =
-      "outcome revealed, result shown, action completed, decision finished, object reaching destination, sudden jump, jerky motion, reaching toward option, touching option, grabbing option, pressing button, opening item, picking item, hand hovering over option";
+      "outcome revealed, result shown, action completed, decision finished, sudden jump, jerky motion";
     const spoken =
       typeof parsed.spoken_dialogue === "string" ? parsed.spoken_dialogue.trim().slice(0, 120) : "";
     return {
@@ -240,7 +218,7 @@ function buildFallbackScenes(baseScene: BaseScene, userPlotChange: string): Enha
       },
     ],
     negative_prompt:
-      "outcome revealed, result shown, action completed, decision finished, object reaching destination, sudden jump, jerky motion, reaching toward option, touching option, grabbing option, pressing button, opening item, picking item, hand hovering over option, walking, stepping, moving forward, approaching",
+      "outcome revealed, result shown, action completed, decision finished, sudden jump, jerky motion",
     outcomes: [],
   };
 }
@@ -705,6 +683,11 @@ export async function publishDraft(input: {
     .eq("id", input.jobId);
 
   logLine(input.jobId, "published", { clipId: (clipNode as any).id });
+
+  import("@/video-intelligence/pipeline")
+    .then((m) => m.analyzeClipVideo(String((clipNode as any).id)))
+    .catch(() => {});
+
   revalidatePath("/feed");
   return { data: { clipId: (clipNode as any).id } };
 }

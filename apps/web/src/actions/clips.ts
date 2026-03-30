@@ -212,6 +212,10 @@ export async function uploadClip(formData: FormData) {
     .update({ root_clip_node_id: clipNode.id })
     .eq("id", story.id);
 
+  import("@/video-intelligence/pipeline")
+    .then((m) => m.analyzeClipVideo(clipNode.id))
+    .catch(() => {});
+
   return { data: clipNode };
 }
 
@@ -273,6 +277,10 @@ export async function createClipFromUpload(input: {
     .from("stories")
     .update({ root_clip_node_id: clipNode.id })
     .eq("id", story.id);
+
+  import("@/video-intelligence/pipeline")
+    .then((m) => m.analyzeClipVideo(clipNode.id))
+    .catch(() => {});
 
   return { data: clipNode };
 }
