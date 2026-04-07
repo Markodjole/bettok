@@ -145,6 +145,7 @@ VALUES
         'likes', jsonb_build_array('BBQ', 'wings', 'sweet tea', 'home-cooked meals', 'anything grilled'),
         'dislikes', jsonb_build_array('overpriced restaurant food', 'fancy small portions', 'anything pretentious')
       ),
+      
       'activities', jsonb_build_object(
         'likes', jsonb_build_array('basketball', 'poker nights', 'car shows', 'grilling', 'negotiating deals'),
         'dislikes', jsonb_build_array('waiting without purpose', 'overpaying', 'following rigid schedules')
