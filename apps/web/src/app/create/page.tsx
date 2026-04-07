@@ -2,6 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
+
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Upload, Loader2, ImageIcon, Film, Trash2, Users, ChevronRight, Plus, ArrowLeft } from "lucide-react";
