@@ -33,6 +33,12 @@ export interface FeedClip {
   winning_outcome_text?: string | null;
   resolution_reason_text?: string | null;
   resolved_at?: string | null;
+  /** Character fields (from feed_clips view JOIN) */
+  character_id?: string | null;
+  character_name?: string | null;
+  character_slug?: string | null;
+  character_tagline?: string | null;
+  character_betting_signals?: Record<string, unknown> | null;
 }
 
 const isDbUnavailable = (err: { code?: string; message?: string }) =>

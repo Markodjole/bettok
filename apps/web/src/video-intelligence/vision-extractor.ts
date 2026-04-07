@@ -131,6 +131,7 @@ function coerceCharacter(c: unknown): ObservedFacts["characters"][number] {
     ...(o.dominantEmotion || o.dominant_emotion ? { dominantEmotion: String(o.dominantEmotion ?? o.dominant_emotion) } : {}),
     ...(o.clothingTop || o.clothing_top ? { clothingTop: String(o.clothingTop ?? o.clothing_top) } : {}),
     ...(o.clothingBottom || o.clothing_bottom ? { clothingBottom: String(o.clothingBottom ?? o.clothing_bottom) } : {}),
+    ...(o.locationInFrame || o.location_in_frame ? { locationInFrame: String(o.locationInFrame ?? o.location_in_frame) } : {}),
     ...(o.confidence ? { confidence: Number(o.confidence) } : {}),
   };
 }

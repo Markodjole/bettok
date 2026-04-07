@@ -16,6 +16,8 @@ import type { SelectionCandidate, MultiSelectionResult } from "@bettok/fair-sele
 import { getContinuationContext } from "@/video-intelligence/pipeline";
 import type { ContinuationContext } from "@/video-intelligence/types";
 import { settleClipNode } from "@/actions/settlement";
+import { recordCharacterTraitEvent, getCharacterById } from "@/actions/characters";
+import { characterToPromptContext, characterToKlingIdentity } from "@/lib/characters/types";
 import {
   clusterCandidateLabels,
   expandPlausibilityScores,
@@ -183,8 +185,7 @@ export async function startContinuation(clipNodeId: string) {
       genre: clipNode.genre,
       tone: clipNode.tone,
       realism_level: clipNode.realism_level,
-      // Keep continuation node as internal branch state; feed renders continuation
-      // through original clip's part2_video_storage_path instead of a new post card.
+      character_id: clipNode.character_id ?? null,
       published_at: null,
       betting_deadline: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),
     })
@@ -247,6 +248,24 @@ export async function startContinuation(clipNodeId: string) {
       total_clips: (clipNode.total_clips || 1) + 1,
     })
     .eq("id", clipNode.story_id);
+
+  if (clipNode.character_id && continuation.continuation_summary) {
+    try {
+      const traitTags = selectedLabels.map((l: string) =>
+        l.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 50),
+      );
+      await recordCharacterTraitEvent({
+        characterId: clipNode.character_id,
+        clipNodeId,
+        actionTaken: continuation.continuation_summary,
+        context: continuation.scene_explanation ?? undefined,
+        traitTags,
+      });
+      console.log(`[continuation] Recorded trait event for character ${clipNode.character_id}`);
+    } catch (err) {
+      console.error("[continuation] Failed to record trait event:", (err as Error)?.message);
+    }
+  }
 
   // Trigger video analysis on the new clip
   if (continuationClip?.id && result.videoStoragePath) {
@@ -316,6 +335,22 @@ async function runContinuationPipeline(
     console.error("[continuation] Failed to get video analysis:", (err as Error)?.message);
   }
 
+  // Step 1b: Fetch character data if associated
+  let characterContext: string | null = null;
+  let characterIdentity: string | null = null;
+  if (clipNode.character_id) {
+    try {
+      const { character: charData } = await getCharacterById(String(clipNode.character_id));
+      if (charData) {
+        characterContext = characterToPromptContext(charData);
+        characterIdentity = characterToKlingIdentity(charData);
+        console.log(`[continuation] Loaded character: ${charData.name}`);
+      }
+    } catch (err) {
+      console.error("[continuation] Failed to load character:", (err as Error)?.message);
+    }
+  }
+
   // Step 2: Real-world plausibility scoring + wildcard generation
   let plausibilityScores: Record<string, { score: number; reasoning: string }> = {};
   let wildcards: Array<{ label: string; weight: number; reasoning: string }> = [];
@@ -335,6 +370,7 @@ async function runContinuationPipeline(
           ctx.mainStory,
           ctx.characters,
           ctx.environment,
+          characterContext,
         );
         plausibilityScores = expandPlausibilityScores(
           plausResult.scores,
@@ -573,6 +609,8 @@ async function runContinuationPipeline(
     String(clipNode.scene_summary ?? ""),
     predictions,
     isLlmAvailable,
+    characterContext,
+    characterIdentity,
   );
 
   console.log(
@@ -599,6 +637,7 @@ async function runContinuationPipeline(
         continuation.negative_prompt,
         ctx,
         continuation.video_duration_seconds,
+        characterIdentity,
       );
     } catch (err) {
       console.error("[continuation] Video generation failed:", (err as Error)?.message);
@@ -629,6 +668,7 @@ async function scoreRealWorldPlausibility(
   mainStory: string,
   characters: ContinuationContext["characters"],
   environment: ContinuationContext["environment"],
+  characterProfile?: string | null,
 ): Promise<PlausibilityResult> {
   const characterDesc = characters.map((c) => {
     const parts = [c.label];
@@ -685,9 +725,13 @@ Return JSON:
   "wildcards": [ { "label": string, "weight": number, "reasoning": string } ]
 }`;
 
+  const characterProfileBlock = characterProfile
+    ? `\n\nKNOWN CHARACTER PROFILE (use this heavily for scoring — personality, preferences, and past behavior directly affect plausibility):\n${characterProfile}\n`
+    : "";
+
   const userMessage = `Scene: ${mainStory}
 Characters: ${characterDesc}
-Environment: ${envDesc}
+Environment: ${envDesc}${characterProfileBlock}
 
 Existing candidates to score for plausibility:
 ${candidateLabels.map((l, i) => `${i + 1}. "${l}"`).join("\n")}
@@ -839,6 +883,8 @@ async function generateContinuationNarrative(
   sceneSummaryFallback: string,
   predictions: string[],
   isLlmAvailable: boolean,
+  characterContext?: string | null,
+  characterIdentity?: string | null,
 ) {
   type ContinuationResult = {
     continuation_summary: string;
@@ -883,6 +929,7 @@ async function generateContinuationNarrative(
       accessories: c.accessories,
       emotion: c.dominantEmotion,
       posture: c.posture,
+      location_in_frame: c.locationInFrame,
     })),
     objects: ctx.objects.map((o) => ({
       id: o.objectId,
@@ -931,7 +978,11 @@ async function generateContinuationNarrative(
     selected_next_actions: selectedActions,
   };
 
-  const systemPrompt = `${DIRECTOR_SYSTEM_PROMPT}
+  const characterBlock = characterContext
+    ? `\n\nCHARACTER PROFILE (from database — use this to predict behavior):\n${characterContext}\n\nThis character has a rich behavioral profile. The continuation MUST be consistent with their personality, preferences, and past behavior. If the character "dislikes running" they should not suddenly start jogging. If they "love Coca-Cola" they are more likely to pick it. Use the character's decision style and risk appetite to guide HOW they act, not just WHAT they do.\n${characterIdentity ? `\nFor the video_prompt, prefix character description with: SAME CHARACTER: ${characterIdentity}` : ""}`
+    : "";
+
+  const systemPrompt = `${DIRECTOR_SYSTEM_PROMPT}${characterBlock}
 
 ADDITIONAL RULES FOR EVIDENCE-BASED CONTINUATION:
 You have structured video analysis data below. USE IT as your primary source of truth.
@@ -960,6 +1011,10 @@ CONTINUITY IS CRITICAL — CHARACTER IDENTITY:
 - The video_prompt MUST begin with a full character description that matches the analysis data EXACTLY. Do NOT use vague terms like "a person" or "a man" — be specific: "a young adult male with [hair], wearing [top] and [bottom], [build] build".
 - If hair description is "unknown", describe what IS known (age, build, clothing).
 - NEVER change clothing, hair, or physical features between Part 1 and Part 2.
+- Preserve character screen-side placement from the last frame:
+  - If a character is on the left, keep them on the left unless the action explicitly crosses the frame.
+  - If another character is on the right, keep them on the right.
+  - Do NOT mirror or flip character positions arbitrarily.
 - Objects must maintain their state AND their location. Check each object's "state" and "location_in_frame" fields.
   - If an object state is "held", do NOT say the character "picks it up" — they already have it.
   - If pineapple location is "produce section", don't show it near the bread shelf.
@@ -1031,13 +1086,15 @@ RULE 7 — negative_prompt must include all competing items/actions that should 
 RULE 8 — Causal consistency: action prerequisites come first, target stays consistent through the sequence.
 
 VIDEO DURATION:
-You MUST return "video_duration_seconds" — an integer from 2 to 10.
-Pick the duration based on how many distinct physical actions the scene contains:
-- 1 simple action (e.g. put item in cart): 4
-- 1 action + reaction (e.g. put item in cart, companion nods): 5
-- 2 sequential actions (e.g. examine label, then hand to companion): 6–7
-- 3+ actions or actions with dialogue/discussion: 8–10
-Shorter is better for simple outcomes — a 4-second clip of one clear action looks natural, while stretching it to 10 looks slow-motion.
+You MUST return "video_duration_seconds" — an integer from 5 to 10.
+This is the RESOLUTION clip — the viewer has been waiting for an answer. It must feel unhurried and clear.
+Pick the duration based on complexity:
+- 1 clear action with obvious outcome (e.g. puts item in cart): 5
+- 1 action + visible reaction (e.g. picks item, companion nods): 6–7
+- 2 sequential actions (e.g. compares items, then returns one to shelf): 7–8
+- 3+ actions or multi-step resolution: 8–10
+NEVER go below 5 — short clips look sped-up and ruin the payoff.
+NEVER cram too many actions if it would require speeding up. Cut less important details instead.
 
 Return JSON:
 {
@@ -1049,7 +1106,7 @@ Return JSON:
   scene_explanation: string,
   video_prompt: string,
   negative_prompt: string,
-  video_duration_seconds: number (2-10)
+  video_duration_seconds: number (5-10)
 }`;
 
   try {
@@ -1074,6 +1131,7 @@ async function generateContinuationVideo(
   negativePrompt: string | undefined,
   ctx: ContinuationContext | null,
   durationSeconds?: number,
+  dbCharacterIdentity?: string | null,
 ): Promise<string> {
   const supabase = await createServiceClient();
   const { getFalClient, falLongJobOptions } = await import("@/lib/fal/server");
@@ -1107,37 +1165,59 @@ async function generateContinuationVideo(
     throw new Error("Cannot generate continuation video without a start image (last frame extraction failed)");
   }
 
-  // Build a detailed character identity string from analysis data to enforce
-  // visual consistency between Part 1 and Part 2.
+  // Build character identity for the video prompt prefix.
+  // If a DB character is linked, use the canonical DB identity (it's the source of truth).
+  // Fall back to vision-detected data only for non-character clips.
   let prompt = videoPrompt;
   if (ctx) {
-    const charParts: string[] = [];
+    let charIdentity = "";
 
-    for (const c of ctx.characters) {
-      const desc: string[] = [];
-      if (c.ageGroup && c.ageGroup !== "unknown") desc.push(c.ageGroup.replace(/_/g, " "));
-      if (c.genderPresentation && c.genderPresentation !== "unknown") {
-        desc.push(c.genderPresentation === "male_presenting" ? "male" : c.genderPresentation === "female_presenting" ? "female" : c.genderPresentation);
+    if (dbCharacterIdentity) {
+      charIdentity = dbCharacterIdentity;
+    } else {
+      const charParts: string[] = [];
+      for (const c of ctx.characters) {
+        const desc: string[] = [];
+        if (c.ageGroup && c.ageGroup !== "unknown") desc.push(c.ageGroup.replace(/_/g, " "));
+        if (c.genderPresentation && c.genderPresentation !== "unknown") {
+          desc.push(c.genderPresentation === "male_presenting" ? "male" : c.genderPresentation === "female_presenting" ? "female" : c.genderPresentation);
+        }
+        if (c.bodyBuild && c.bodyBuild !== "unknown") desc.push(`${c.bodyBuild} build`);
+        if (c.hairDescription && c.hairDescription !== "unknown") desc.push(`${c.hairDescription} hair`);
+        const clothing: string[] = [];
+        if (c.clothingTop && c.clothingTop !== "unknown") clothing.push(c.clothingTop);
+        if (c.clothingBottom && c.clothingBottom !== "unknown") clothing.push(c.clothingBottom);
+        if (clothing.length > 0) desc.push(`wearing ${clothing.join(" and ")}`);
+        if (c.accessories && c.accessories.length > 0) desc.push(`with ${c.accessories.join(", ")}`);
+        if (desc.length > 0) {
+          charParts.push(desc.join(", "));
+        }
       }
-      if (c.bodyBuild && c.bodyBuild !== "unknown") desc.push(`${c.bodyBuild} build`);
-      if (c.hairDescription && c.hairDescription !== "unknown") desc.push(`${c.hairDescription} hair`);
-      const clothing: string[] = [];
-      if (c.clothingTop && c.clothingTop !== "unknown") clothing.push(c.clothingTop);
-      if (c.clothingBottom && c.clothingBottom !== "unknown") clothing.push(c.clothingBottom);
-      if (clothing.length > 0) desc.push(`wearing ${clothing.join(" and ")}`);
-      if (c.accessories && c.accessories.length > 0) desc.push(`with ${c.accessories.join(", ")}`);
-      if (desc.length > 0) {
-        charParts.push(desc.join(", "));
-      }
+      charIdentity = charParts.length > 0
+        ? `SAME CHARACTER: ${charParts.join("; ")}.`
+        : "";
     }
 
-    const charIdentity = charParts.length > 0
-      ? `SAME CHARACTER: ${charParts.join("; ")}.`
+    const positionAnchors = ctx.characters
+      .map((c) => {
+        const loc = c.locationInFrame?.toLowerCase() ?? "";
+        if (!loc) return "";
+        if (loc.includes("left")) return `${c.label} stays on left side of frame`;
+        if (loc.includes("right")) return `${c.label} stays on right side of frame`;
+        if (loc.includes("center")) return `${c.label} stays near center of frame`;
+        return "";
+      })
+      .filter(Boolean);
+    const positionAnchor = positionAnchors.length > 0
+      ? `POSITION LOCK: ${positionAnchors.join("; ")}. Do not mirror character positions.`
       : "";
 
     const cameraAnchor = ctx.continuityAnchors?.cameraStyle?.slice(0, 1).join(", ") ?? "";
 
-    const anchorPrefix = [charIdentity, cameraAnchor].filter(Boolean).join(" ");
+    const identityLock = dbCharacterIdentity
+      ? "IDENTITY LOCK: exact same person as start frame; preserve face structure, hair length/style/color, facial hair, skin tone, and outfit. No haircut, no hairstyle change, no wardrobe change."
+      : "";
+    const anchorPrefix = [charIdentity, identityLock, positionAnchor, cameraAnchor].filter(Boolean).join(" ");
     if (anchorPrefix) {
       prompt = `${anchorPrefix} ${prompt}`;
     }
@@ -1151,8 +1231,8 @@ async function generateContinuationVideo(
     input: {
       start_image_url: startImageUrl,
       prompt,
-      negative_prompt: `${negativePrompt || "blurry, low quality, text overlay, watermark"}, different person, different clothes, costume change, different hair, different outfit, wardrobe change, distorted face`,
-      duration: String(Math.min(10, Math.max(2, durationSeconds ?? 5))),
+      negative_prompt: `${negativePrompt || "blurry, low quality, text overlay, watermark"}, different person, different clothes, costume change, different hair, shorter hair, longer hair, haircut, shaved head, hairstyle change, different outfit, wardrobe change, distorted face`,
+      duration: String(Math.min(10, Math.max(5, durationSeconds ?? 7))),
       generate_audio: true,
     },
     logs: true,

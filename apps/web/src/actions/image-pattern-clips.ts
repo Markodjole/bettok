@@ -14,13 +14,13 @@ function logLine(jobId: string, phase: string, extra?: Record<string, unknown>) 
   console.log(`${ts} [pattern-gen job=${jobId}] ${phase}${payload}`);
 }
 
-async function downloadToUint8Array(url: string) {
+export async function downloadToUint8Array(url: string) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to download asset: ${res.status}`);
   return new Uint8Array(await res.arrayBuffer());
 }
 
-async function uploadBytesToMedia(storagePath: string, bytes: Uint8Array, contentType: string) {
+export async function uploadBytesToMedia(storagePath: string, bytes: Uint8Array, contentType: string) {
   const serviceClient = await createServiceClient();
   const { error } = await serviceClient.storage.from("media").upload(storagePath, bytes, {
     upsert: true,
@@ -29,7 +29,7 @@ async function uploadBytesToMedia(storagePath: string, bytes: Uint8Array, conten
   if (error) throw new Error(`Supabase upload failed: ${error.message}`);
 }
 
-async function trimVideoAt(videoBytes: Uint8Array, cutSeconds: number): Promise<Uint8Array> {
+export async function trimVideoAt(videoBytes: Uint8Array, cutSeconds: number): Promise<Uint8Array> {
   const dir = await mkdtemp(join(tmpdir(), "trim-"));
   const inPath = join(dir, "input.mp4");
   const outPath = join(dir, "output.mp4");
@@ -52,7 +52,7 @@ async function trimVideoAt(videoBytes: Uint8Array, cutSeconds: number): Promise<
 // Types
 // ---------------------------------------------------------------------------
 
-type BaseScene = {
+export type BaseScene = {
   subject: string;
   subject_state: string;
   environment: string;
@@ -60,18 +60,20 @@ type BaseScene = {
   textures: string;
 };
 
-type MultiScene = {
+export type MultiScene = {
   prompt: string;
   duration: string;
 };
 
-type EnhancedPlot = {
+export type EnhancedPlot = {
   scene_summary: string;
   scenes: MultiScene[];
   negative_prompt: string;
   outcomes: string[];
   /** Optional subtitle line; empty if no speech implied */
   spoken_dialogue: string;
+  /** LLM-decided total clip duration: 6, 8, or 10 seconds */
+  total_duration_seconds?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -135,12 +137,15 @@ The subject, environment, and objects are already visible — just describe the 
    BAD: "appears", "is seen", "can be observed", "the camera reveals"
    GOOD: "walks", "grips", "lifts", "turns", "reaches", "steps", "leans"
 
-4. NO FILLER DESCRIPTIONS between actions:
-   BAD: "The ambient light casts soft shadows, highlighting the contours of his physique and the equipment, creating a sense of anticipation."
-   GOOD: (just skip it — Kling doesn't need mood paragraphs, it needs motion instructions)
+4. BLEND ACTION WITH ENVIRONMENT — Each scene should combine physical motion with
+   brief sensory/environmental detail so Kling maintains the setting consistently.
+   BAD (pure filler): "The ambient light casts soft shadows, highlighting the contours of his physique and the equipment, creating a sense of anticipation."
+   BAD (pure action): "He picks up the barbell."
+   GOOD: "He grips the barbell firmly, the polished metal gleaming under the gym's overhead lights, and positions his feet shoulder-width on the rubber mat."
+   Include 1-2 short environment anchors per scene (lighting, surfaces, objects nearby).
 
-5. KEEP IT SHORT AND PHYSICAL — 30-40 words per scene, not 60.
-   Every word should describe either a body movement or a camera movement.
+5. AIM FOR 40-60 WORDS PER SCENE — enough for Kling to understand both the motion
+   AND the setting. Every scene should mention at least one environmental element.
 
 ===== DIALOGUE / VOICE =====
 ABSOLUTELY FORBIDDEN unless user explicitly asks for speech.
@@ -159,10 +164,16 @@ The user may specify a Mood and/or Camera style. If provided, use them:
 - If not provided, choose what fits the action naturally.
 
 ===== SCENE STRUCTURE =====
-- Scene 1 (2s): The action BEGINS. Subject starts moving as user described. Keep it simple — one smooth motion.
-- Scene 2 (2s): The action DEVELOPS. The main beat of the user's plot unfolds. This is the heart.
-- Scene 3 (2s): TENSION / ANTICIPATION. Movement slows to stillness. The subject holds position. Camera may drift slowly. No resolution — the viewer feels the moment hanging.
-- This is Part 1 of a two-part video. NEVER show the outcome or resolution.
+You MUST decide the total duration: 6, 8, or 10 seconds. Return "total_duration_seconds" in JSON.
+- Simple setup (1 action + cliffhanger): 6s → 3 scenes × 2s
+- Medium setup (2 actions + cliffhanger): 8s → scene_1=3s, scene_2=3s, scene_3=2s
+- Complex setup (3+ actions + cliffhanger): 10s → scene_1=3s, scene_2=4s, scene_3=3s
+Set each scene's "duration" field accordingly.
+
+- Scene 1: ESTABLISH & BEGIN. The action starts. Subject begins moving as user described. Keep it simple — one smooth motion.
+- Scene 2: The action DEVELOPS. The main beat of the user's plot unfolds. Let movements breathe — do not rush.
+- Scene 3: CLIFFHANGER. Movement slows to stillness. The subject holds position facing a clear choice/dilemma. The viewer MUST see what the options are. Camera may drift slowly. No resolution.
+- This is Part 1 of a two-part video. NEVER show the outcome or resolution. The clip MUST end with a visible dilemma.
 
 ===== EXAMPLE =====
 User plot: "man walks up to squat rack and prepares to squat"
@@ -187,9 +198,13 @@ Return JSON:
   "mood": "the emotional tone",
   "feasibility_notes": "brief note on any adaptations you made and why",
   "enhanced_plot": "your cinematic version of the user's plot (1-2 sentences)",
-  "scene_1": "scene 1 prompt (40 words max, action only)",
-  "scene_2": "scene 2 prompt (40 words max, action only)",
-  "scene_3": "scene 3 prompt (40 words max, stillness + camera)",
+  "total_duration_seconds": 6 | 8 | 10,
+  "scene_1": "scene 1 prompt (40-60 words, action + environment grounding)",
+  "scene_1_duration": "2" | "3",
+  "scene_2": "scene 2 prompt (40-60 words, action + environmental detail)",
+  "scene_2_duration": "2" | "3" | "4",
+  "scene_3": "scene 3 prompt (40-60 words, cliffhanger + visible dilemma + camera)",
+  "scene_3_duration": "2" | "3",
   "negative_prompt": "things to avoid (do NOT include objects the user requested)",
   "outcomes": ["outcome A", "outcome B", "outcome C"],
   "spoken_dialogue": "If the user's plot includes speech (quoted words, 'says', 'whispers', etc.), write the subtitle line (max 120 chars). Otherwise empty string."
@@ -221,13 +236,14 @@ Return JSON:
     return {
       scene_summary: parsed.scene_summary || userPlotChange,
       scenes: [
-        { prompt: parsed.scene_1, duration: "2" },
-        { prompt: parsed.scene_2, duration: "2" },
-        { prompt: parsed.scene_3, duration: "2" },
+        { prompt: parsed.scene_1, duration: String(parsed.scene_1_duration || "2") },
+        { prompt: parsed.scene_2, duration: String(parsed.scene_2_duration || "2") },
+        { prompt: parsed.scene_3, duration: String(parsed.scene_3_duration || "2") },
       ],
       negative_prompt: `${parsed.negative_prompt || ""}, ${hardNegative}`.replace(/^,\s*/, ""),
       outcomes: parsed.outcomes || [],
       spoken_dialogue: spoken,
+      total_duration_seconds: parsed.total_duration_seconds,
     };
   } catch {
     return null;
@@ -262,7 +278,7 @@ function buildFallbackScenes(baseScene: BaseScene, userPlotChange: string): Enha
 // Post-generation: analyze video for resolution and find cut point
 // ---------------------------------------------------------------------------
 
-async function analyzeVideoForResolution(
+export async function analyzeVideoForResolution(
   videoUrl: string,
   sceneSummary: string,
   outcomes: string[],
@@ -495,7 +511,7 @@ async function runGeneration(opts: {
         multi_prompt: enhanced.scenes.map((s: MultiScene) => ({ prompt: s.prompt, duration: s.duration })),
         shot_type: "customize",
         negative_prompt: enhanced.negative_prompt,
-        duration: "6",
+        duration: String(Math.min(10, Math.max(5, enhanced.total_duration_seconds || 6))),
         generate_audio: true,
       },
       logs: true,

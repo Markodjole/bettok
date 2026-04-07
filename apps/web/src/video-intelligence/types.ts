@@ -51,6 +51,7 @@ export const characterSchema = z.object({
   dominantEmotion: z.string().optional(),
   gazeDirection: z.string().optional(),
   posture: z.string().optional(),
+  locationInFrame: z.string().optional(),
   confidence: z.number().min(0).max(1).optional(),
 });
 

@@ -238,6 +238,24 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
           </Link>
         </div>
 
+        {clip.character_name && (
+          <div className="flex flex-col gap-1.5">
+            <Link
+              href={`/character/${clip.character_slug || clip.character_id}`}
+              className="inline-flex items-center gap-1.5 rounded-full bg-primary/20 px-2.5 py-1 text-xs font-medium text-white backdrop-blur-sm self-start"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+              {clip.character_name}
+            </Link>
+            {clip.character_betting_signals && (
+              <CharacterQuickRead
+                name={clip.character_name}
+                signals={clip.character_betting_signals as Record<string, unknown>}
+              />
+            )}
+          </div>
+        )}
+
         {clip.transcript?.trim() ? (
           <p
             className="rounded-md bg-black/60 px-2.5 py-1.5 text-left text-sm font-medium leading-snug text-white shadow-md [text-shadow:0_1px_2px_rgba(0,0,0,0.95)] line-clamp-4"
@@ -468,5 +486,75 @@ function CountdownBadge({ deadline }: { deadline: Date }) {
       <Timer className="h-3 w-3" />
       {timeLeft}
     </span>
+  );
+}
+
+function CharacterQuickRead({
+  name,
+  signals,
+}: {
+  name: string;
+  signals: Record<string, unknown>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const quickRead = Array.isArray(signals.quick_read) ? (signals.quick_read as string[]) : [];
+  const exploitable = Array.isArray(signals.exploitable_tendencies)
+    ? (signals.exploitable_tendencies as string[])
+    : [];
+
+  if (quickRead.length === 0) return null;
+
+  return (
+    <div className="max-w-[240px]">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1 rounded-md bg-black/50 px-2 py-1 text-[10px] text-white/80 backdrop-blur-sm transition hover:bg-black/60"
+      >
+        <TrendingUp className="h-3 w-3 text-primary" />
+        <span className="font-medium">Betting edge</span>
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`transition-transform ${expanded ? "rotate-180" : ""}`}
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {expanded && (
+        <div className="mt-1 rounded-lg bg-black/60 px-3 py-2 backdrop-blur-md">
+          <p className="mb-1.5 text-[10px] font-semibold text-primary uppercase tracking-wider">
+            {name}&apos;s patterns
+          </p>
+          <ul className="space-y-0.5">
+            {quickRead.map((line) => (
+              <li key={line} className="text-[11px] text-white/90 leading-tight">
+                • {line}
+              </li>
+            ))}
+          </ul>
+          {exploitable.length > 0 && (
+            <>
+              <p className="mt-2 mb-1 text-[10px] font-semibold text-yellow-400/90 uppercase tracking-wider">
+                Exploitable
+              </p>
+              <ul className="space-y-0.5">
+                {exploitable.slice(0, 3).map((line) => (
+                  <li key={line} className="text-[10px] text-white/70 leading-tight">
+                    → {line}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

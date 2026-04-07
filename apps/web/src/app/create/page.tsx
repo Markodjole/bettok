@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { Upload, Loader2, ImageIcon, Film, Trash2 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Upload, Loader2, ImageIcon, Film, Trash2, Users, ChevronRight, Plus, ArrowLeft } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,8 @@ import {
   dismissDraft,
   deleteDraft,
 } from "@/actions/image-pattern-clips";
+import { getCharacters } from "@/actions/characters";
+import type { CharacterWithImages } from "@/lib/characters/types";
 import { createBrowserClient, getUserQueued } from "@/lib/supabase/client";
 import { cn, getMediaUrl } from "@/lib/utils";
 
@@ -38,11 +40,37 @@ const CREATE_REVIEW_CACHE_KEY = "create:pending_review:v1";
 const CREATE_SCENE_SELECT_ITEM =
   "rounded-lg py-3 pl-9 pr-3 text-base data-[highlighted]:bg-primary/15 data-[highlighted]:text-foreground";
 
+type CreateMode = "character" | "image";
+
 export default function CreatePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { toast } = useToast();
   const customFileRef = useRef<HTMLInputElement>(null);
 
+  // Mode: character vs image-pattern
+  const [mode, setMode] = useState<CreateMode>(
+    searchParams.get("character") ? "character" : "character",
+  );
+
+  // Characters
+  const [characters, setCharacters] = useState<CharacterWithImages[]>([]);
+  const [charactersLoading, setCharactersLoading] = useState(true);
+  const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
+  const [locationText, setLocationText] = useState("");
+
+  // Custom character creation
+  const [creatingCharacter, setCreatingCharacter] = useState(false);
+  const [newCharName, setNewCharName] = useState("");
+  const [newCharTagline, setNewCharTagline] = useState("");
+  const [newCharBackstory, setNewCharBackstory] = useState("");
+  const [newCharFile, setNewCharFile] = useState<File | null>(null);
+  const [newCharImagePath, setNewCharImagePath] = useState<string | null>(null);
+  const [newCharUploading, setNewCharUploading] = useState(false);
+  const [newCharAnalyzing, setNewCharAnalyzing] = useState(false);
+  const [newCharAppearance, setNewCharAppearance] = useState<Record<string, unknown> | null>(null);
+  const [newCharSaving, setNewCharSaving] = useState(false);
+  const newCharFileRef = useRef<HTMLInputElement>(null);
 
   // Patterns from DB
   const [patterns, setPatterns] = useState<any[]>([]);
@@ -73,6 +101,7 @@ export default function CreatePage() {
   const [reviewImagePath, setReviewImagePath] = useState<string | null>(null);
   const [reviewSummary, setReviewSummary] = useState<string | null>(null);
   const [reviewLlmGen, setReviewLlmGen] = useState<any>(null);
+  const [reviewCharacterId, setReviewCharacterId] = useState<string | null>(null);
   const [improveFeedback, setImproveFeedback] = useState("");
   const [improving, setImproving] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -81,6 +110,23 @@ export default function CreatePage() {
 
   useEffect(() => {
     let mounted = true;
+
+    // Load characters
+    getCharacters().then((res) => {
+      if (!mounted) return;
+      setCharacters(res.characters ?? []);
+      setCharactersLoading(false);
+      const preselect = searchParams.get("character");
+      if (preselect && res.characters?.length) {
+        const match = res.characters.find(
+          (c) => c.slug === preselect || c.id === preselect,
+        );
+        if (match) {
+          setSelectedCharacterId(match.id);
+          setMode("character");
+        }
+      }
+    });
 
     const readCache = () => {
       if (typeof window === "undefined") return null;
@@ -117,22 +163,19 @@ export default function CreatePage() {
       setPatternsLoading(true);
     }
 
-    // Always refresh in background to keep it up to date.
-    // If cache is fresh, this runs silently with no loader flicker.
     getImagePatterns().then((res: { patterns: any[]; error?: string }) => {
       if (!mounted) return;
       if (res.patterns && Array.isArray(res.patterns)) {
         setPatterns(res.patterns);
         writeCache(res.patterns);
       }
-      // Show loader only when we had no usable cache.
       if (!cacheFresh) setPatternsLoading(false);
     });
 
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [searchParams]);
 
   useEffect(() => {
     // Source of truth recovery from server in case user navigated away during generation.
@@ -171,6 +214,7 @@ export default function CreatePage() {
         reviewImagePath?: string;
         reviewSummary?: string;
         reviewLlmGen?: any;
+        reviewCharacterId?: string;
       };
       if (cached.reviewVideoPath && cached.reviewJobId) {
         setReviewMode(true);
@@ -179,6 +223,7 @@ export default function CreatePage() {
         setReviewImagePath(cached.reviewImagePath ?? null);
         setReviewSummary(cached.reviewSummary ?? null);
         setReviewLlmGen(cached.reviewLlmGen ?? null);
+        setReviewCharacterId(cached.reviewCharacterId ?? null);
       }
     } catch {
       // ignore bad cache
@@ -224,8 +269,11 @@ export default function CreatePage() {
   }, []);
 
   const selectedPattern = patterns.find((p) => p.id === selectedPatternId);
+  const selectedCharacter = characters.find((c) => c.id === selectedCharacterId);
   const isCustomMode = !!customImagePath && customAnalyzed;
-  const hasSource = !!selectedPatternId || isCustomMode;
+  const hasSource = mode === "character"
+    ? !!selectedCharacterId
+    : !!selectedPatternId || isCustomMode;
 
   function selectPattern(id: string) {
     if (selectedPatternId === id) {
@@ -315,9 +363,21 @@ export default function CreatePage() {
     tensionText.trim() ? `The moment ends with: ${tensionText.trim()}` : "",
   ].filter(Boolean).join(". ");
 
+  const characterPlotChange = [
+    locationText.trim() ? `Location: ${locationText.trim()}.` : "",
+    actionText.trim(),
+    tensionText.trim() ? `The moment ends with: ${tensionText.trim()}` : "",
+  ].filter(Boolean).join(" ");
+
   async function handleGenerate() {
     if (!hasSource || !actionText.trim()) {
-      toast({ title: "Missing fields", description: "Select an image and describe the physical actions", variant: "destructive" });
+      toast({
+        title: "Missing fields",
+        description: mode === "character"
+          ? "Select a character and describe movements"
+          : "Select an image and describe the physical actions",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -333,7 +393,16 @@ export default function CreatePage() {
     try {
       let res: { error?: string; data?: any };
 
-      if (isCustomMode && customImagePath) {
+      if (mode === "character" && selectedCharacterId) {
+        const { generateFromCharacter } = await import("@/actions/character-clips");
+        res = await generateFromCharacter({
+          characterId: selectedCharacterId,
+          locationDescription: locationText.trim(),
+          plotChange: characterPlotChange.trim(),
+          mood: mood !== "neutral" ? mood : undefined,
+          camera: camera !== "auto" ? camera : undefined,
+        });
+      } else if (isCustomMode && customImagePath) {
         res = await generateFromCustomImage({
           imageStoragePath: customImagePath,
           plotChange: plotChange.trim(),
@@ -348,7 +417,7 @@ export default function CreatePage() {
           camera: camera !== "auto" ? camera : undefined,
         });
       } else {
-        res = { error: "No image selected" };
+        res = { error: "No source selected" };
       }
 
       if (res.error) {
@@ -372,6 +441,7 @@ export default function CreatePage() {
       setReviewImagePath(d.imageStoragePath);
       setReviewSummary(d.sceneSummary);
       setReviewLlmGen(d.llmGeneration);
+      setReviewCharacterId(d.characterId ?? null);
       if (typeof window !== "undefined") {
         window.localStorage.setItem(
           CREATE_REVIEW_CACHE_KEY,
@@ -381,10 +451,19 @@ export default function CreatePage() {
             reviewImagePath: d.imageStoragePath,
             reviewSummary: d.sceneSummary,
             reviewLlmGen: d.llmGeneration,
+            reviewCharacterId: d.characterId ?? null,
           }),
         );
       }
-      toast({ title: "Video ready!", description: "Review your clip before posting" });
+      if (d.characterAdaptation?.adapted) {
+        toast({
+          title: `Adapted for ${selectedCharacter?.name ?? "character"}`,
+          description: d.characterAdaptation.explanation || d.characterAdaptation.warnings?.[0] || "Input was adjusted to fit character personality",
+          duration: 8000,
+        });
+      } else {
+        toast({ title: "Video ready!", description: "Review your clip before posting" });
+      }
       if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
         const n = new Notification("Video is ready for review", {
           body: "Tap to open /create and review before posting.",
@@ -407,13 +486,26 @@ export default function CreatePage() {
     if (!reviewJobId || !reviewVideoPath) return;
     setPublishing(true);
     try {
-      const res = await publishDraft({
-        jobId: reviewJobId!,
-        videoStoragePath: reviewVideoPath!,
-        imageStoragePath: reviewImagePath || "",
-        sceneSummary: reviewSummary || "",
-        llmGeneration: reviewLlmGen,
-      });
+      let res: { error?: string; data?: any };
+      if (reviewCharacterId) {
+        const { publishCharacterDraft } = await import("@/actions/character-clips");
+        res = await publishCharacterDraft({
+          jobId: reviewJobId!,
+          videoStoragePath: reviewVideoPath!,
+          imageStoragePath: reviewImagePath || "",
+          sceneSummary: reviewSummary || "",
+          llmGeneration: reviewLlmGen,
+          characterId: reviewCharacterId,
+        });
+      } else {
+        res = await publishDraft({
+          jobId: reviewJobId!,
+          videoStoragePath: reviewVideoPath!,
+          imageStoragePath: reviewImagePath || "",
+          sceneSummary: reviewSummary || "",
+          llmGeneration: reviewLlmGen,
+        });
+      }
 
       if (res.error) {
         toast({ title: "Publish failed", description: res.error, variant: "destructive" });
@@ -461,6 +553,78 @@ export default function CreatePage() {
     }
   }
 
+  async function handleNewCharFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !file.type.startsWith("image/")) {
+      toast({ title: "Invalid file", description: "Please select an image", variant: "destructive" });
+      return;
+    }
+    setNewCharFile(file);
+    setNewCharUploading(true);
+    setNewCharAppearance(null);
+    try {
+      const { data: { user } } = await getUserQueued();
+      if (!user) throw new Error("Not signed in");
+      const ext = file.name.split(".").pop() || "jpg";
+      const storagePath = `characters/custom/${user.id}/${Date.now()}.${ext}`;
+      const supabase = createBrowserClient();
+      const { error: uploadErr } = await supabase.storage
+        .from("media")
+        .upload(storagePath, file, { upsert: true });
+      if (uploadErr) throw new Error(uploadErr.message);
+      setNewCharImagePath(storagePath);
+      setNewCharUploading(false);
+      setNewCharAnalyzing(true);
+      const { analyzeCharacterImage } = await import("@/actions/characters");
+      const analysis = await analyzeCharacterImage(storagePath);
+      if (analysis.error) throw new Error(analysis.error);
+      setNewCharAppearance(analysis.appearance ?? null);
+      toast({ title: "Image analyzed", description: "Character appearance detected", variant: "success" });
+    } catch (err: any) {
+      toast({ title: "Failed", description: err?.message || "Unknown error", variant: "destructive" });
+      setNewCharFile(null);
+      setNewCharImagePath(null);
+    } finally {
+      setNewCharUploading(false);
+      setNewCharAnalyzing(false);
+    }
+  }
+
+  async function handleSaveCustomCharacter() {
+    if (!newCharName.trim() || !newCharImagePath || !newCharAppearance) {
+      toast({ title: "Missing info", description: "Name and image required", variant: "destructive" });
+      return;
+    }
+    setNewCharSaving(true);
+    try {
+      const { createCustomCharacter } = await import("@/actions/characters");
+      const result = await createCustomCharacter({
+        name: newCharName.trim(),
+        tagline: newCharTagline.trim() || undefined,
+        imageStoragePath: newCharImagePath,
+        appearance: newCharAppearance,
+        backstory: newCharBackstory.trim() || undefined,
+      });
+      if (result.error) throw new Error(result.error);
+      if (result.character) {
+        setCharacters((prev) => [...prev, result.character!]);
+        setSelectedCharacterId(result.character.id);
+        setCreatingCharacter(false);
+        setNewCharName("");
+        setNewCharTagline("");
+        setNewCharBackstory("");
+        setNewCharFile(null);
+        setNewCharImagePath(null);
+        setNewCharAppearance(null);
+        toast({ title: "Character created!", description: `${result.character.name} is ready`, variant: "success" });
+      }
+    } catch (err: any) {
+      toast({ title: "Failed", description: err?.message || "Unknown error", variant: "destructive" });
+    } finally {
+      setNewCharSaving(false);
+    }
+  }
+
   const actionExamples: Record<string, string> = {
     lion_grass: "e.g. lion spots a gazelle, eyes widen, body lowers into a crouch, muscles tense",
     vending_machine: "e.g. kid walks up, inserts a coin, hand moves across the buttons left to right",
@@ -495,11 +659,13 @@ export default function CreatePage() {
     man_cooking_kitchen: "e.g. flame flares up from the pan; he recoils slightly, still mid-reach",
   };
 
-  const actionPlaceholder = selectedPattern
-    ? actionExamples[selectedPattern.slug] || "e.g. he walks to the table, picks up the cup, brings it to his lips"
-    : isCustomMode
-      ? "e.g. she steps forward, reaches out, picks up the item from the shelf"
-      : "Select or upload an image first";
+  const actionPlaceholder = mode === "character" && selectedCharacter
+    ? `e.g. ${selectedCharacter.name} walks to the counter, looks at the options, reaches for...`
+    : selectedPattern
+      ? actionExamples[selectedPattern.slug] || "e.g. he walks to the table, picks up the cup, brings it to his lips"
+      : isCustomMode
+        ? "e.g. she steps forward, reaches out, picks up the item from the shelf"
+        : "Select or upload an image first";
 
   const tensionPlaceholder = selectedPattern
     ? tensionExamples[selectedPattern.slug] || "e.g. frozen mid-action, about to decide"
@@ -662,22 +828,238 @@ export default function CreatePage() {
       <div className="flex h-full flex-col overflow-y-auto no-scrollbar">
         <div className="space-y-4 p-4">
           <Card>
-            {!previewImageUrl && (
-              <CardHeader>
+            {!previewImageUrl && !selectedCharacter && (
+              <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2">
-                  <ImageIcon className="h-5 w-5 text-primary" />
+                  <Film className="h-5 w-5 text-primary" />
                   Create Clip
                 </CardTitle>
               </CardHeader>
             )}
             <CardContent className="space-y-5">
-              {!previewImageUrl && (
-                <p className="text-sm text-muted-foreground">
-                  Choose a starting image or upload your own, then describe what happens next.
-                </p>
+              {/* Mode tabs */}
+              {!previewImageUrl && !selectedCharacter && (
+                <div className="flex rounded-lg border border-border bg-muted/40 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setMode("character")}
+                    className={cn(
+                      "flex-1 rounded-md py-2.5 text-sm font-medium transition-all",
+                      mode === "character"
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <Users className="mr-1.5 inline-block h-4 w-4" />
+                    Character
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode("image")}
+                    className={cn(
+                      "flex-1 rounded-md py-2.5 text-sm font-medium transition-all",
+                      mode === "image"
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <ImageIcon className="mr-1.5 inline-block h-4 w-4" />
+                    Image
+                  </button>
+                </div>
               )}
 
-              {/* --- Pattern picker / focused selected image --- */}
+              {/* ── CHARACTER PICKER ── */}
+              {mode === "character" && (
+                <div className="relative">
+                  {selectedCharacter ? (
+                    <div className="space-y-3">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCharacterId(null)}
+                        className="relative w-full overflow-hidden rounded-xl border-2 border-primary ring-2 ring-primary/30 shadow-2xl"
+                      >
+                        {(() => {
+                          const primary = selectedCharacter.reference_images.find((i) => i.is_primary)
+                            ?? selectedCharacter.reference_images[0];
+                          const imgUrl = primary ? getMediaUrl(primary.image_storage_path) : null;
+                          return imgUrl ? (
+                            <img src={imgUrl} alt={selectedCharacter.name} className="h-[50vh] w-full object-cover bg-black/30" />
+                          ) : (
+                            <div className="flex h-[50vh] items-center justify-center bg-muted">
+                              <Users className="h-16 w-16 text-muted-foreground/40" />
+                            </div>
+                          );
+                        })()}
+                        <div className="absolute right-3 top-3 rounded-full bg-primary p-1.5">
+                          <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        </div>
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-3">
+                          <p className="text-lg font-bold text-white">{selectedCharacter.name}</p>
+                          {selectedCharacter.tagline && (
+                            <p className="text-xs text-white/70">{selectedCharacter.tagline}</p>
+                          )}
+                        </div>
+                      </button>
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+                          {selectedCharacter.personality.temperament}
+                        </span>
+                        <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">
+                          {selectedCharacter.personality.decision_style}
+                        </span>
+                        <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">
+                          Risk: {selectedCharacter.personality.risk_appetite}
+                        </span>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-sm font-medium" htmlFor="locationText">
+                          Location / Setting
+                        </label>
+                        <Input
+                          id="locationText"
+                          placeholder="e.g. busy supermarket, quiet park bench, rooftop bar at sunset"
+                          value={locationText}
+                          onChange={(e) => setLocationText(e.target.value)}
+                          maxLength={200}
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => router.push(`/character/${selectedCharacter.slug}`)}
+                        className="flex w-full items-center justify-between rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground hover:bg-muted transition-colors"
+                      >
+                        <span>View {selectedCharacter.name}'s profile & history</span>
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ) : charactersLoading ? (
+                    <CinemaLoader label="Loading characters" />
+                  ) : creatingCharacter ? (
+                    <div className="space-y-4">
+                      <button
+                        type="button"
+                        onClick={() => setCreatingCharacter(false)}
+                        className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+                      >
+                        <ArrowLeft className="h-4 w-4" /> Back to characters
+                      </button>
+                      <p className="text-sm font-medium text-foreground">Create your character</p>
+
+                      <input ref={newCharFileRef} type="file" accept="image/*" className="hidden" onChange={handleNewCharFileChange} />
+                      {newCharFile ? (
+                        <div className="relative overflow-hidden rounded-xl border-2 border-primary aspect-[3/4] max-h-[280px]">
+                          <img src={URL.createObjectURL(newCharFile)} alt="New character" className="h-full w-full object-cover" />
+                          {(newCharUploading || newCharAnalyzing) && (
+                            <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center gap-2">
+                              <Loader2 className="h-8 w-8 text-white animate-spin" />
+                              <span className="text-xs text-white">{newCharAnalyzing ? "Analyzing appearance..." : "Uploading..."}</span>
+                            </div>
+                          )}
+                          {newCharAppearance && (
+                            <div className="absolute right-2 top-2 rounded-full bg-green-500 p-1.5">
+                              <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                              </svg>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => newCharFileRef.current?.click()}
+                          className="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-muted-foreground/25 bg-muted/30 p-8 transition hover:border-primary/50 hover:bg-muted/50"
+                        >
+                          <Upload className="h-8 w-8 text-muted-foreground" />
+                          <span className="text-sm font-medium text-muted-foreground">Upload character photo</span>
+                          <span className="text-xs text-muted-foreground/60">Front-facing, clear image works best</span>
+                        </button>
+                      )}
+
+                      <div className="space-y-2">
+                        <Input placeholder="Character name" value={newCharName} onChange={(e) => setNewCharName(e.target.value)} maxLength={50} />
+                        <Input placeholder="Tagline (optional, e.g. 'The impulsive foodie')" value={newCharTagline} onChange={(e) => setNewCharTagline(e.target.value)} maxLength={100} />
+                        <textarea
+                          placeholder="Backstory (optional) — personality, habits, quirks..."
+                          value={newCharBackstory}
+                          onChange={(e) => setNewCharBackstory(e.target.value)}
+                          maxLength={500}
+                          rows={3}
+                          className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 resize-none"
+                        />
+                      </div>
+
+                      <Button
+                        className="w-full"
+                        size="lg"
+                        onClick={handleSaveCustomCharacter}
+                        disabled={!newCharName.trim() || !newCharAppearance || newCharSaving}
+                      >
+                        {newCharSaving ? (
+                          <><Loader2 className="h-4 w-4 animate-spin" /> Creating...</>
+                        ) : (
+                          <><Plus className="h-4 w-4" /> Create Character</>
+                        )}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3">
+                      {characters.map((c) => {
+                        const primary = c.reference_images.find((i) => i.is_primary) ?? c.reference_images[0];
+                        const imgUrl = primary ? getMediaUrl(primary.image_storage_path) : null;
+                        return (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => setSelectedCharacterId(c.id)}
+                            className="relative overflow-hidden rounded-xl border-2 border-border hover:border-primary/50 transition-all aspect-[3/4]"
+                          >
+                            {imgUrl ? (
+                              <img src={imgUrl} alt={c.name} className="h-full w-full object-cover" />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center bg-muted">
+                                <Users className="h-10 w-10 text-muted-foreground/40" />
+                              </div>
+                            )}
+                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2.5">
+                              <p className="text-sm font-bold text-white">{c.name}</p>
+                              {c.tagline && (
+                                <p className="text-[10px] text-white/60 line-clamp-1">{c.tagline}</p>
+                              )}
+                              <div className="mt-1 flex gap-1">
+                                <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[9px] text-white">
+                                  {c.personality.temperament}
+                                </span>
+                              </div>
+                            </div>
+                            {c.total_videos > 0 && (
+                              <div className="absolute right-2 top-2 rounded-full bg-black/50 px-1.5 py-0.5 text-[9px] text-white">
+                                {c.total_videos} clips
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+
+                      <button
+                        type="button"
+                        onClick={() => setCreatingCharacter(true)}
+                        className="flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-muted-foreground/25 bg-muted/30 transition hover:border-primary/50 hover:bg-muted/50 aspect-[3/4]"
+                      >
+                        <Plus className="h-8 w-8 text-muted-foreground" />
+                        <span className="text-xs font-medium text-muted-foreground">Create your own</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── IMAGE PATTERN PICKER ── */}
+              {mode === "image" && (
               <div className="relative">
                 {previewImageUrl ? (
                   <div className="space-y-0">
@@ -780,6 +1162,7 @@ export default function CreatePage() {
                   </div>
                 )}
               </div>
+              )}
 
               {/* Structured scene input */}
               <div className="space-y-4">

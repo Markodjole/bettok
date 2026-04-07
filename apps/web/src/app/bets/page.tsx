@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { TrendingUp, TrendingDown, Lock, CircleDot, BarChart3 } from "lucide-react";
+import { useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { TrendingUp, TrendingDown, Lock, CircleDot, BarChart3, Bell, BellOff, CheckCheck, Sparkles, Film, Trophy, ShieldAlert, Zap } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { getUserBets } from "@/actions/bets";
+import { getNotifications, getUnreadCount, markAllAsRead, markAsRead } from "@/actions/notifications";
 import { cn, formatCurrency, formatRelativeTime } from "@/lib/utils";
 
 type BetRow = {
@@ -20,6 +23,16 @@ type BetRow = {
   created_at: string;
   prediction_markets: { canonical_text: string; market_key: string } | null;
   clip_nodes: { stories: { title: string } | null } | null;
+};
+
+type NotificationRow = {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  link: string | null;
+  read: boolean;
+  created_at: string;
 };
 
 const statusConfig: Record<string, { label: string; variant: "default" | "success" | "destructive" | "warning" }> = {
@@ -163,15 +176,45 @@ function EmptyState({ label }: { label: string }) {
   );
 }
 
+const typeIcons: Record<string, React.ElementType> = {
+  bet_locked: Lock,
+  prediction_accepted: Sparkles,
+  continuation_live: Film,
+  video_review_ready: Film,
+  bet_settled: CircleDot,
+  bet_won: Trophy,
+  bet_lost: TrendingDown,
+  partially_correct: Zap,
+  clip_first_bets: Bell,
+  moderation_action: ShieldAlert,
+};
+
+function NotificationIcon({ type }: { type: string }) {
+  const Icon = typeIcons[type] ?? Bell;
+  return <Icon className="h-4 w-4" />;
+}
+
 export default function BetsPage() {
+  const router = useRouter();
   const [bets, setBets] = useState<BetRow[]>([]);
+  const [notifications, setNotifications] = useState<NotificationRow[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingNotifs, setLoadingNotifs] = useState(true);
+  const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
     async function load() {
-      const data = await getUserBets();
+      const [data, notifData, count] = await Promise.all([
+        getUserBets(),
+        getNotifications(),
+        getUnreadCount(),
+      ]);
       setBets(data as BetRow[]);
+      setNotifications(notifData as NotificationRow[]);
+      setUnreadCount(count);
       setLoading(false);
+      setLoadingNotifs(false);
     }
     load();
   }, []);
@@ -182,6 +225,22 @@ export default function BetsPage() {
   const settledBets = bets.filter((b) =>
     ["settled_win", "settled_loss", "cancelled", "refunded"].includes(b.status)
   );
+
+  function handleMarkAsRead(id: string) {
+    startTransition(async () => {
+      await markAsRead(id);
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+      setUnreadCount((c) => Math.max(0, c - 1));
+    });
+  }
+
+  function handleMarkAllAsRead() {
+    startTransition(async () => {
+      await markAllAsRead();
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+      setUnreadCount(0);
+    });
+  }
 
   function renderBetList(list: BetRow[], emptyLabel: string) {
     if (loading) {
@@ -223,6 +282,14 @@ export default function BetsPage() {
               <TabsTrigger value="all" className="flex-1">
                 All
               </TabsTrigger>
+              <TabsTrigger value="alerts" className="flex-1">
+                Alerts
+                {!loadingNotifs && unreadCount > 0 && (
+                  <span className="ml-1.5 rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] text-primary">
+                    {unreadCount}
+                  </span>
+                )}
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="active">
@@ -235,6 +302,72 @@ export default function BetsPage() {
 
             <TabsContent value="all">
               {renderBetList(bets, "")}
+            </TabsContent>
+
+            <TabsContent value="alerts">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">Alerts moved here from bottom nav</p>
+                  {unreadCount > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 gap-1.5 text-xs"
+                      onClick={handleMarkAllAsRead}
+                      disabled={isPending}
+                    >
+                      <CheckCheck className="h-3.5 w-3.5" />
+                      Mark all read
+                    </Button>
+                  )}
+                </div>
+                {loadingNotifs ? (
+                  <div className="space-y-2">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <Card key={i}>
+                        <CardContent className="p-4">
+                          <Skeleton className="h-12 w-full" />
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                ) : notifications.length === 0 ? (
+                  <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
+                    <BellOff className="h-8 w-8" />
+                    <p className="text-sm">No alerts yet</p>
+                  </div>
+                ) : (
+                  notifications.map((notif) => (
+                    <Card
+                      key={notif.id}
+                      className={cn("cursor-pointer transition-colors", !notif.read && "border-primary/30 bg-primary/5")}
+                      onClick={() => {
+                        if (!notif.read) handleMarkAsRead(notif.id);
+                        if (notif.link) router.push(notif.link);
+                      }}
+                    >
+                      <CardContent className="flex gap-3 p-4">
+                        <div
+                          className={cn(
+                            "flex h-10 w-10 shrink-0 items-center justify-center rounded-full",
+                            notif.read ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary"
+                          )}
+                        >
+                          <NotificationIcon type={notif.type} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className={cn("text-sm leading-snug", !notif.read && "font-semibold")}>{notif.title}</p>
+                            {!notif.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" />}
+                          </div>
+                          <p className="mt-0.5 text-xs text-muted-foreground line-clamp-2">{notif.body}</p>
+                          <p className="mt-1 text-[10px] text-muted-foreground">{formatRelativeTime(notif.created_at)}</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))
+                )}
+              </div>
             </TabsContent>
           </Tabs>
         </div>

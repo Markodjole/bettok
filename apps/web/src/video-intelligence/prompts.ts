@@ -21,6 +21,7 @@ Analyze the provided video frames and return a single JSON object that merges ob
    - dominantEmotion: what their expression conveys
    - gazeDirection: where they are looking
    - posture: body position
+   - locationInFrame: where they are in frame (e.g. "left side", "center-right", "foreground center")
    - confidence: 0-1
 
 2. "objects" — array of important visible objects (list EACH distinct product/item separately, not as a group):

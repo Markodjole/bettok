@@ -7,7 +7,7 @@ import {
   Flame,
   Plus,
   Wallet,
-  Bell,
+  Users,
   User,
 } from "lucide-react";
 
@@ -15,7 +15,7 @@ const navItems = [
   { href: "/feed", label: "Feed", icon: Flame },
   { href: "/bets", label: "Bets", icon: Wallet },
   { href: "/create", label: "Create", icon: Plus, accent: true },
-  { href: "/notifications", label: "Alerts", icon: Bell },
+  { href: "/characters", label: "Characters", icon: Users },
   { href: "/profile", label: "Profile", icon: User },
 ];
 
