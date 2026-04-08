@@ -46,6 +46,8 @@ export default async function CharacterProfilePage({
     character.reference_images.find((img) => img.is_primary) ??
     character.reference_images[0];
   const heroSrc = getMediaUrl(primaryImage?.image_storage_path);
+  const heroImages =
+    character.reference_images.length > 0 ? character.reference_images : [];
 
   return (
     <AppShell>
@@ -75,16 +77,35 @@ export default async function CharacterProfilePage({
         <div className="space-y-4 px-4 pb-8">
           {/* Hero / Header */}
           <div className="relative overflow-hidden rounded-2xl bg-card border border-border">
-            {heroSrc ? (
-              <div className="relative aspect-[3/4] max-h-[360px] w-full">
-                <Image
-                  src={heroSrc}
-                  alt={character.name}
-                  fill
-                  className="object-cover"
-                  priority
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-card via-card/40 to-transparent" />
+            {heroImages.length > 0 ? (
+              <div className="relative">
+                <div className="flex snap-x snap-mandatory overflow-x-auto">
+                  {heroImages.map((img, idx) => {
+                    const src = getMediaUrl(img.image_storage_path);
+                    return (
+                      <div
+                        key={`${img.image_storage_path}-${idx}`}
+                        className="relative aspect-[3/4] max-h-[360px] w-full shrink-0 snap-center"
+                      >
+                        {src ? (
+                          <Image
+                            src={src}
+                            alt={`${character.name} reference ${idx + 1}`}
+                            fill
+                            className="object-cover"
+                            priority={idx === 0}
+                          />
+                        ) : (
+                          <div className="h-full w-full bg-secondary" />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-card via-card/40 to-transparent" />
+                <div className="absolute right-2 top-2 rounded bg-black/50 px-2 py-1 text-[10px] text-white">
+                  Swipe left/right
+                </div>
               </div>
             ) : (
               <div className="aspect-[3/4] max-h-[360px] w-full bg-secondary" />
@@ -98,37 +119,6 @@ export default async function CharacterProfilePage({
               </p>
             </div>
           </div>
-
-          {/* All reference images */}
-          {character.reference_images.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>All Reference Images</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-                  {character.reference_images.map((img, idx) => {
-                    const src = getMediaUrl(img.image_storage_path);
-                    return (
-                      <div
-                        key={`${img.image_storage_path}-${idx}`}
-                        className="relative h-28 w-20 shrink-0 overflow-hidden rounded-md border border-border bg-secondary"
-                      >
-                        {src ? (
-                          <Image
-                            src={src}
-                            alt={`${character.name} reference ${idx + 1}`}
-                            fill
-                            className="object-cover"
-                          />
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-          )}
 
           {/* Stats bar */}
           <div className="grid grid-cols-3 gap-2">
