@@ -22,7 +22,12 @@ export const falLongJobOptions = {
 
 export function getFalClient() {
   if (!configured) {
-    const key = process.env.FAL_KEY;
+    const rawKey =
+      process.env.FAL_KEY ||
+      process.env.FAL_API_KEY ||
+      process.env.FAL_CLIENT_KEY ||
+      "";
+    const key = rawKey.replace(/^Bearer\s+/i, "").trim();
     if (!key) {
       throw new Error("Missing FAL_KEY env var");
     }

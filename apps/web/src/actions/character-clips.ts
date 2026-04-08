@@ -27,6 +27,11 @@ function logLine(jobId: string, phase: string, extra?: Record<string, unknown>) 
   console.log(`${ts} [char-gen job=${jobId}] ${phase}${payload}`);
 }
 
+function isFalForbiddenError(err: unknown): boolean {
+  const e = err as { status?: number; message?: string } | undefined;
+  return e?.status === 403 || /forbidden/i.test(String(e?.message ?? ""));
+}
+
 // ---------------------------------------------------------------------------
 // Guard: check for in-flight character generation jobs
 // ---------------------------------------------------------------------------
@@ -783,7 +788,18 @@ export async function generateFromCharacter(input: {
     const falFile = new File([imgBuffer], `character.${ext}`, {
       type: ext === "jpg" || ext === "jpeg" ? "image/jpeg" : "image/png",
     });
-    const characterImageUrl = await fal.storage.upload(falFile);
+    let characterImageUrl: string;
+    try {
+      characterImageUrl = await fal.storage.upload(falFile);
+    } catch (uploadErr: any) {
+      if (isFalForbiddenError(uploadErr)) {
+        return {
+          error:
+            "fal.ai rejected upload (403). Check local FAL key in env (FAL_KEY/FAL_API_KEY) and ensure it has Kling access.",
+        };
+      }
+      throw uploadErr;
+    }
     if (!characterImageUrl) return { error: "Failed to upload character image to fal.ai" };
     logLine("pre-job", "character_image_uploaded", {
       characterId: character.id,
