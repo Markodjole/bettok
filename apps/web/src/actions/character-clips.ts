@@ -793,12 +793,17 @@ export async function generateFromCharacter(input: {
       characterImageUrl = await fal.storage.upload(falFile);
     } catch (uploadErr: any) {
       if (isFalForbiddenError(uploadErr)) {
-        return {
-          error:
-            "fal.ai rejected upload (403). Check local FAL key in env (FAL_KEY/FAL_API_KEY) and ensure it has Kling access.",
-        };
+        // Fallback for local/dev where storage upload scope may be restricted:
+        // use a data URL as start image directly.
+        const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : "image/png";
+        characterImageUrl = `data:${mime};base64,${Buffer.from(imgBuffer).toString("base64")}`;
+        logLine("pre-job", "character_image_upload_forbidden_fallback_data_url", {
+          status: uploadErr?.status ?? 403,
+          bytes: imgBuffer.byteLength,
+        });
+      } else {
+        throw uploadErr;
       }
-      throw uploadErr;
     }
     if (!characterImageUrl) return { error: "Failed to upload character image to fal.ai" };
     logLine("pre-job", "character_image_uploaded", {
