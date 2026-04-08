@@ -735,85 +735,91 @@ export async function generateFromCharacter(input: {
   mood?: string;
   camera?: string;
 }) {
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: "Not signed in" };
+  try {
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { error: "Not signed in" };
 
-  const serviceClient = await createServiceClient();
-  const guard = await checkAndClearStaleJobs(serviceClient, user.id);
-  if (guard.blocked) return { error: "A generation is already running. Please wait." };
+    const serviceClient = await createServiceClient();
+    const guard = await checkAndClearStaleJobs(serviceClient, user.id);
+    if (guard.blocked) return { error: "A generation is already running. Please wait." };
 
-  const { character, error: charErr } = await getCharacterById(input.characterId);
-  if (charErr || !character) return { error: charErr || "Character not found" };
+    const { character, error: charErr } = await getCharacterById(input.characterId);
+    if (charErr || !character) return { error: charErr || "Character not found" };
 
-  // Check if user input is compatible with character personality
-  const compat = await checkCharacterCompatibility(
-    character,
-    input.locationDescription,
-    input.plotChange,
-  );
-  const effectivePlot = compat.adaptedPlot;
-  const effectiveLocation = compat.adaptedLocation;
+    // Check if user input is compatible with character personality
+    const compat = await checkCharacterCompatibility(
+      character,
+      input.locationDescription,
+      input.plotChange,
+    );
+    const effectivePlot = compat.adaptedPlot;
+    const effectiveLocation = compat.adaptedLocation;
 
-  const bestImage = character.reference_images.length > 1
-    ? await pickBestReferenceImage(character.reference_images, effectiveLocation, effectivePlot)
-    : character.reference_images.find((img) => img.is_primary) ?? character.reference_images[0];
-  if (!bestImage) return { error: "Character has no reference image" };
+    const bestImage = character.reference_images.length > 1
+      ? await pickBestReferenceImage(character.reference_images, effectiveLocation, effectivePlot)
+      : character.reference_images.find((img) => img.is_primary) ?? character.reference_images[0];
+    if (!bestImage) return { error: "Character has no reference image" };
 
-  logLine("pre-job", "image_selected", {
-    angle: bestImage.angle,
-    path: bestImage.image_storage_path,
-    reason: bestImage.description,
-  });
+    logLine("pre-job", "image_selected", {
+      angle: bestImage.angle,
+      path: bestImage.image_storage_path,
+      reason: bestImage.description,
+    });
 
-  const imageStoragePath = bestImage.image_storage_path;
+    const imageStoragePath = bestImage.image_storage_path;
 
-  const fal = getFalClient();
+    const fal = getFalClient();
 
-  const { data: imgBytes } = await serviceClient.storage
-    .from("media")
-    .download(imageStoragePath);
-  if (!imgBytes) return { error: "Character reference image not found in storage" };
+    const { data: imgBytes } = await serviceClient.storage
+      .from("media")
+      .download(imageStoragePath);
+    if (!imgBytes) return { error: "Character reference image not found in storage" };
 
-  const imgBuffer = new Uint8Array(await imgBytes.arrayBuffer());
-  const ext = imageStoragePath.split(".").pop() || "png";
-  const falFile = new File([imgBuffer], `character.${ext}`, {
-    type: ext === "jpg" || ext === "jpeg" ? "image/jpeg" : "image/png",
-  });
-  const characterImageUrl = await fal.storage.upload(falFile);
-  if (!characterImageUrl) return { error: "Failed to upload character image to fal.ai" };
-  logLine("pre-job", "character_image_uploaded", {
-    characterId: character.id,
-    url: characterImageUrl,
-  });
+    const imgBuffer = new Uint8Array(await imgBytes.arrayBuffer());
+    const ext = imageStoragePath.split(".").pop() || "png";
+    const falFile = new File([imgBuffer], `character.${ext}`, {
+      type: ext === "jpg" || ext === "jpeg" ? "image/jpeg" : "image/png",
+    });
+    const characterImageUrl = await fal.storage.upload(falFile);
+    if (!characterImageUrl) return { error: "Failed to upload character image to fal.ai" };
+    logLine("pre-job", "character_image_uploaded", {
+      characterId: character.id,
+      url: characterImageUrl,
+    });
 
-  const baseScene = buildBaseSceneFromCharacter(character, effectiveLocation);
+    const baseScene = buildBaseSceneFromCharacter(character, effectiveLocation);
 
-  const result = await runCharacterGeneration({
-    user,
-    serviceClient,
-    fal,
-    character,
-    imageStoragePath,
-    characterImageUrl,
-    baseScene,
-    plotChange: effectivePlot,
-    mood: input.mood,
-    camera: input.camera,
-  });
+    const result = await runCharacterGeneration({
+      user,
+      serviceClient,
+      fal,
+      character,
+      imageStoragePath,
+      characterImageUrl,
+      baseScene,
+      plotChange: effectivePlot,
+      mood: input.mood,
+      camera: input.camera,
+    });
 
-  // Attach adaptation info so the UI can inform the user
-  if (!compat.compatible && result.data) {
-    (result.data as any).characterAdaptation = {
-      adapted: true,
-      warnings: compat.warnings,
-      explanation: compat.explanation,
-    };
+    // Attach adaptation info so the UI can inform the user
+    if (!compat.compatible && result.data) {
+      (result.data as any).characterAdaptation = {
+        adapted: true,
+        warnings: compat.warnings,
+        explanation: compat.explanation,
+      };
+    }
+
+    return result;
+  } catch (e: any) {
+    const message = e?.message || "Character generation failed";
+    console.error("[generateFromCharacter] unexpected error", e);
+    return { error: message };
   }
-
-  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -828,84 +834,90 @@ export async function publishCharacterDraft(input: {
   llmGeneration: any;
   characterId: string;
 }) {
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: "Not signed in" };
+  try {
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { error: "Not signed in" };
 
-  const serviceClient = await createServiceClient();
-  const now = new Date().toISOString();
+    const serviceClient = await createServiceClient();
+    const now = new Date().toISOString();
 
-  const { data: story, error: storyErr } = await serviceClient
-    .from("stories")
-    .insert({
-      title: (input.sceneSummary || "Untitled").slice(0, 80),
-      creator_user_id: user.id,
-    })
-    .select()
-    .single();
-  if (storyErr || !story) return { error: "Failed to create story" };
+    const { data: story, error: storyErr } = await serviceClient
+      .from("stories")
+      .insert({
+        title: (input.sceneSummary || "Untitled").slice(0, 80),
+        creator_user_id: user.id,
+      })
+      .select()
+      .single();
+    if (storyErr || !story) return { error: "Failed to create story" };
 
-  const llm = (input.llmGeneration || {}) as { spoken_dialogue?: string };
-  const transcript =
-    typeof llm.spoken_dialogue === "string" && llm.spoken_dialogue.trim()
-      ? llm.spoken_dialogue.trim().slice(0, 500)
-      : null;
+    const llm = (input.llmGeneration || {}) as { spoken_dialogue?: string };
+    const transcript =
+      typeof llm.spoken_dialogue === "string" && llm.spoken_dialogue.trim()
+        ? llm.spoken_dialogue.trim().slice(0, 500)
+        : null;
 
-  const { data: clipNode, error: clipErr } = await serviceClient
-    .from("clip_nodes")
-    .insert({
-      story_id: (story as any).id,
-      creator_user_id: user.id,
-      character_id: input.characterId,
-      source_type: "image_to_video",
-      status: "betting_open",
-      video_storage_path: input.videoStoragePath,
-      poster_storage_path: input.imageStoragePath,
-      first_frame_storage_path: input.imageStoragePath,
-      llm_generation_json: input.llmGeneration,
-      scene_summary: input.sceneSummary,
-      transcript,
-      published_at: now,
-      betting_deadline: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),
-    })
-    .select()
-    .single();
-  if (clipErr || !clipNode)
-    return { error: `Failed to create clip: ${(clipErr as any)?.message ?? ""}` };
+    const { data: clipNode, error: clipErr } = await serviceClient
+      .from("clip_nodes")
+      .insert({
+        story_id: (story as any).id,
+        creator_user_id: user.id,
+        character_id: input.characterId,
+        source_type: "image_to_video",
+        status: "betting_open",
+        video_storage_path: input.videoStoragePath,
+        poster_storage_path: input.imageStoragePath,
+        first_frame_storage_path: input.imageStoragePath,
+        llm_generation_json: input.llmGeneration,
+        scene_summary: input.sceneSummary,
+        transcript,
+        published_at: now,
+        betting_deadline: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),
+      })
+      .select()
+      .single();
+    if (clipErr || !clipNode)
+      return { error: `Failed to create clip: ${(clipErr as any)?.message ?? ""}` };
 
-  await serviceClient
-    .from("stories")
-    .update({ root_clip_node_id: (clipNode as any).id })
-    .eq("id", (story as any).id);
-
-  await serviceClient
-    .from("clip_generation_jobs")
-    .update({ status: "completed", clip_node_id: (clipNode as any).id, updated_at: now })
-    .eq("id", input.jobId);
-
-  const { data: charRow } = await serviceClient
-    .from("characters")
-    .select("total_videos")
-    .eq("id", input.characterId)
-    .single();
-  if (charRow) {
     await serviceClient
+      .from("stories")
+      .update({ root_clip_node_id: (clipNode as any).id })
+      .eq("id", (story as any).id);
+
+    await serviceClient
+      .from("clip_generation_jobs")
+      .update({ status: "completed", clip_node_id: (clipNode as any).id, updated_at: now })
+      .eq("id", input.jobId);
+
+    const { data: charRow } = await serviceClient
       .from("characters")
-      .update({ total_videos: (Number(charRow.total_videos) || 0) + 1 })
-      .eq("id", input.characterId);
+      .select("total_videos")
+      .eq("id", input.characterId)
+      .single();
+    if (charRow) {
+      await serviceClient
+        .from("characters")
+        .update({ total_videos: (Number(charRow.total_videos) || 0) + 1 })
+        .eq("id", input.characterId);
+    }
+
+    logLine(input.jobId, "published", {
+      clipId: (clipNode as any).id,
+      characterId: input.characterId,
+    });
+
+    import("@/video-intelligence/pipeline")
+      .then((m) => m.analyzeClipVideo(String((clipNode as any).id)))
+      .catch(() => {});
+
+    revalidatePath("/feed");
+    return { data: { clipId: (clipNode as any).id } };
+  } catch (e: any) {
+    const message = e?.message || "Publish failed";
+    console.error("[publishCharacterDraft] unexpected error", e);
+    return { error: message };
   }
-
-  logLine(input.jobId, "published", {
-    clipId: (clipNode as any).id,
-    characterId: input.characterId,
-  });
-
-  import("@/video-intelligence/pipeline")
-    .then((m) => m.analyzeClipVideo(String((clipNode as any).id)))
-    .catch(() => {});
-
-  revalidatePath("/feed");
-  return { data: { clipId: (clipNode as any).id } };
 }
