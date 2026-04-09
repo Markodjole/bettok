@@ -5,10 +5,18 @@ export const dynamic = "force-dynamic";
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Upload, Loader2, ImageIcon, Film, Trash2, Users, ChevronRight, Plus, ArrowLeft, X } from "lucide-react";
+import { Upload, Loader2, ImageIcon, Film, Trash2, Users, ChevronRight, Plus, ArrowLeft, X, Sparkles } from "lucide-react";
 import { CharacterFieldWithSuggestions } from "@/components/create/character-field-suggestions";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -35,6 +43,10 @@ import {
   generateFromCharacter,
   publishCharacterDraft,
 } from "../../actions/character-clips";
+import {
+  suggestCharacterClipIdeas,
+  type CharacterClipAiOption,
+} from "@/actions/character-clip-ai-suggestions";
 import { getCharacters } from "@/actions/characters";
 import type { CharacterWithImages } from "@/lib/characters/types";
 import {
@@ -128,6 +140,9 @@ function CreatePageClient() {
   const [improving, setImproving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [aiClipDialogOpen, setAiClipDialogOpen] = useState(false);
+  const [aiClipLoading, setAiClipLoading] = useState(false);
+  const [aiClipOptions, setAiClipOptions] = useState<CharacterClipAiOption[]>([]);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /** Ignore late `getPendingReviewDraft` results after the user started a new generation. */
   const pendingDraftSeqRef = useRef(0);
@@ -460,6 +475,43 @@ function CreatePageClient() {
   ]
     .filter(Boolean)
     .join("\n\n");
+
+  async function handleAiSuggestClipIdeas() {
+    if (!selectedCharacterId || !selectedCharacter) {
+      toast({ title: "Select a character", variant: "destructive" });
+      return;
+    }
+    if (!locationText.trim()) {
+      toast({
+        title: "Add a location first",
+        description: "The AI needs your setting to write movement and cliffhangers that fit.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setAiClipLoading(true);
+    setAiClipOptions([]);
+    try {
+      const res = await suggestCharacterClipIdeas({
+        characterId: selectedCharacterId,
+        locationDescription: locationText.trim(),
+        ...(mood !== "neutral" ? { mood } : {}),
+        ...(camera !== "auto" ? { camera } : {}),
+      });
+      if (res.error) {
+        toast({ title: "AI suggestions failed", description: res.error, variant: "destructive" });
+        return;
+      }
+      if (!res.data?.options?.length) {
+        toast({ title: "No suggestions returned", variant: "destructive" });
+        return;
+      }
+      setAiClipOptions(res.data.options);
+      setAiClipDialogOpen(true);
+    } finally {
+      setAiClipLoading(false);
+    }
+  }
 
   async function handleGenerate() {
     if (!hasSource || !actionText.trim()) {
@@ -1073,6 +1125,32 @@ function CreatePageClient() {
                         suggestionsTitle={`Settings for ${selectedCharacter.name} — each row is paired with specific scenes`}
                       />
 
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="w-full gap-2"
+                        disabled={!locationText.trim() || aiClipLoading || running}
+                        onClick={() => void handleAiSuggestClipIdeas()}
+                      >
+                        {aiClipLoading ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Generating ideas…
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-4 w-4" />
+                            AI suggest movement & cliffhanger
+                          </>
+                        )}
+                      </Button>
+                      <p className="text-[11px] text-muted-foreground leading-snug">
+                        Uses your profile + location + mood/camera. Picks follow video rules (smooth motion, in-character,
+                        no speech, paired cliffhangers). Set{" "}
+                        <span className="font-medium text-foreground">LLM_MODEL_CHARACTER_CLIP_SUGGEST</span> for a
+                        stronger model (defaults to your other LLM_MODEL settings).
+                      </p>
+
                       <button
                         type="button"
                         onClick={() => router.push(`/character/${selectedCharacter.slug}`)}
@@ -1318,8 +1396,9 @@ function CreatePageClient() {
                       hint={
                         <p className="text-xs text-muted-foreground leading-relaxed">
                           Describe what happens around {selectedCharacter.name} (place, people, tension). How they
-                          move and react comes from their profile — not a new role you invent. Ideas below only
-                          appear after your location text matches a row from the location list (same wording).
+                          move and react comes from their profile — not a new role you invent. Use{" "}
+                          <span className="font-medium text-foreground">AI suggest</span> above for LLM options, or the
+                          list below when your location matches a curated row (exact wording).
                         </p>
                       }
                       placeholder={actionPlaceholder}
@@ -1567,6 +1646,61 @@ function CreatePageClient() {
           </div>
         </div>
       )}
+
+      <Dialog open={aiClipDialogOpen} onOpenChange={setAiClipDialogOpen}>
+        <DialogContent className="max-h-[90vh] max-w-2xl gap-0 overflow-hidden p-0" showClose>
+          <DialogHeader className="border-b border-border px-6 py-4 text-left">
+            <DialogTitle>
+              AI scene ideas{selectedCharacter ? ` — ${selectedCharacter.name}` : ""}
+            </DialogTitle>
+            <DialogDescription>
+              Each block is one movement line plus ending beats written for your location and this character. Choose a
+              pair to fill the form.
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[min(32rem,70vh)] px-6 py-4">
+            <div className="space-y-4 pr-2">
+              {aiClipOptions.map((opt, i) => (
+                <div
+                  key={i}
+                  className="rounded-xl border border-border bg-muted/30 p-4 space-y-3"
+                >
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Option {i + 1} — movement
+                  </p>
+                  <p className="text-sm leading-relaxed text-foreground">{opt.description}</p>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide pt-1">
+                    Ending beats (pick one)
+                  </p>
+                  <div className="flex flex-col gap-2">
+                    {opt.cliffhangers.map((cliff, j) => (
+                      <Button
+                        key={j}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-auto min-h-10 justify-start whitespace-normal py-2 px-3 text-left text-xs leading-snug"
+                        onClick={() => {
+                          setActionText(opt.description.slice(0, ACTION_TEXT_MAX));
+                          setTensionText(cliff.slice(0, TENSION_TEXT_MAX));
+                          setAiClipDialogOpen(false);
+                          toast({
+                            title: "Filled movement & cliffhanger",
+                            description: "You can still edit the text before generating.",
+                            variant: "success",
+                          });
+                        }}
+                      >
+                        {cliff}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
 
     </AppShell>
   );

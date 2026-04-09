@@ -983,7 +983,7 @@ export const CLIP_SUGGESTIONS_BY_SLUG: Record<string, CharacterClipSuggestions> 
           ],
         },
       ]),
-      loc("Gym weight floor, mirrors and chalk dust", [
+      loc("Gym weight area, rubber floor, racks and wall mirrors, bright even lighting", [
         {
           description:
             "Spotter asks five more or rerack now; bar at chest pause breath one rep ambiguous effort.",

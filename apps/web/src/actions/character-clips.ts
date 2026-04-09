@@ -211,7 +211,7 @@ function buildBaseSceneFromCharacter(
     subject: `${char.name}, ${a.gender_presentation}, ${a.age_range}, ${a.build} build, ${a.hair.color} ${a.hair.style} hair, wearing ${outfit}`,
     subject_state: "standing naturally, at ease",
     environment: locationDescription,
-    camera: "medium shot, eye level",
+    camera: "medium-wide shot, eye level, full body visible in frame",
     textures: a.distinguishing_features.join(", ") || "natural skin, fabric textures",
   };
 }
@@ -400,10 +400,10 @@ The start image is a REFERENCE PHOTO of the character — it shows what they LOO
 The background/setting of the photo is IRRELEVANT and must be COMPLETELY IGNORED.
 The actual environment for the video comes from the "Environment" field in BASE IMAGE above.
 
-Scene 1 MUST place the character INTO the story's environment. Open by briefly naming
-the location (e.g. "In a convenience store aisle, ${character.name} …") so Kling
-generates the correct surroundings. After Scene 1 establishes the setting, Scenes 2-3
-can focus purely on motion without re-describing it.
+Scene 1 MUST place the character INTO the story's environment through motion and props
+(shelves, mirrors, counters)—do not open scene_1 with "In [location]…" because the
+image composer already receives the Environment field separately. After Scene 1 anchors
+the setting, Scenes 2–3 can focus on motion without re-describing the place.
 
 ===== HOW KLING AI WORKS =====
 Kling uses the start image to identify the character's appearance, then generates video
@@ -467,7 +467,7 @@ Prefer 8 or 10 seconds total so motion is readable; use 6s only for the simplest
 - Complex setup (3+ actions + cliffhanger): 10s → scene_1=3s, scene_2=4s, scene_3=3s
 Set each scene's "duration" field accordingly.
 
-- Scene 1: ESTABLISH & BEGIN. Name the location/setting (e.g. "In a brightly lit convenience store, ${character.name}…") then start the first motion.
+- Scene 1: ESTABLISH & BEGIN. Do NOT start with "In [location]…" — the location is sent separately to the image composer. Open with ${character.name} and the first motion in that place (e.g. "${character.name} pauses at the shelf, hand hovering…").
 - Scene 2: The action DEVELOPS. The main beat unfolds. This is the heart. Let movements breathe — do not rush.
 - Scene 3: CLIFFHANGER. Movement slows to stillness. ${character.name} holds position facing a clear choice/dilemma. The viewer MUST see what the options are (two items, two paths, a decision point). Camera may drift slowly. No resolution.
 - This is Part 1 of a two-part video. NEVER show the outcome or resolution. The clip MUST end with a visible dilemma.
@@ -556,7 +556,10 @@ function buildFallbackScenes(
     scene_summary: `${character.name} — ${userPlotChange}`,
     spoken_dialogue: "",
     scenes: [
-      { prompt: `${identity}. In ${baseScene.environment}. ${userPlotChange}. The action begins slowly and naturally.`, duration: "3" },
+      {
+        prompt: `${identity}. ${userPlotChange}. The action begins slowly in the setting (${baseScene.environment.slice(0, 120)}).`,
+        duration: "3",
+      },
       { prompt: `Continuing smoothly at a calm pace. The moment develops with clear, readable motion.`, duration: "3" },
       { prompt: `Movement slows to stillness. Camera drifts in slowly. No resolution.`, duration: "2" },
     ],
@@ -571,19 +574,35 @@ function buildFallbackScenes(
 // Compose scene frame: transform reference photo into scene via image-to-image
 // ---------------------------------------------------------------------------
 
+/** Drop leading "In …, " clause so we do not repeat `environment` (redundant i2i prompts confuse anatomy). */
+function stripRedundantInLocationPrefix(scenePrompt: string): string {
+  const t = scenePrompt.trim();
+  const m = t.match(/^in\s+[^,]+,\s*(.*)$/is);
+  return (m?.[1] ?? t).trim() || t;
+}
+
 async function composeSceneFrame(opts: {
   fal: any;
-  character: Character;
   baseScene: BaseScene;
   frontalImageUrl: string;
   scenePrompt: string;
 }): Promise<string | null> {
-  const { fal, character, baseScene, frontalImageUrl, scenePrompt } = opts;
+  const { fal, baseScene, frontalImageUrl, scenePrompt } = opts;
+
+  const env = baseScene.environment.trim();
+  const actionLine = stripRedundantInLocationPrefix(scenePrompt);
+  const camera =
+    /full\s*body|full[- ]length|wide/i.test(baseScene.camera)
+      ? baseScene.camera
+      : `${baseScene.camera}, full body visible head to toe in frame`;
 
   const prompt = [
-    `Same person, exact same face and body, now standing in: ${baseScene.environment}.`,
-    scenePrompt,
-    `${baseScene.camera}. Keep the person identical, only change the background and surroundings. Natural motion speed, not sped up.`,
+    `Use the reference image as the same real person: preserve face, hair, outfit, body shape, and skin tone. One coherent person only.`,
+    `Full-length figure: entire body from head to feet must be visible, both legs complete, feet on the ground, correct anatomy. Do not crop at the waist or thighs. No missing or fused legs.`,
+    `Replace only the backdrop and context with this setting: ${env}.`,
+    `Scene beat (pose and situation—do not invent a new identity): ${actionLine}`,
+    `${camera}. Lighting matches the setting. Mirror reflections, if any, must be soft and partial—never a second full face or duplicate body.`,
+    `Avoid random floor powder, debris clouds, or chalk explosions; keep the floor readable and the person's legs clearly visible.`,
   ].join(" ");
 
   logLine("compose", "scene_frame_prompt", { prompt: prompt.slice(0, 300) });
@@ -659,7 +678,6 @@ async function runCharacterGeneration(opts: {
   // Compose a scene frame: transform reference photo into the story's environment
   const composedFrameUrl = await composeSceneFrame({
     fal,
-    character,
     baseScene,
     frontalImageUrl: characterImageUrl,
     scenePrompt: enhanced.scenes[0].prompt,
