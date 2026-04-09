@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerClient, createServiceClient } from "@/lib/supabase/server";
 import type { Character, CharacterWithImages, CharacterReferenceImage, BettingSignals } from "@/lib/characters/types";
+import { getClipSuggestionsForSlug } from "@/lib/characters/clip-suggestions";
 
 function detectAngleFromFilename(name: string): string {
   const n = name.toLowerCase();
@@ -101,6 +102,7 @@ export async function getCharacters(): Promise<{
         c,
         imagesByChar.get(c.id) ?? [],
       ),
+      clip_suggestions: getClipSuggestionsForSlug(c.slug),
     })),
   );
 
@@ -138,6 +140,7 @@ export async function getCharacterBySlug(slug: string): Promise<{
         char,
         (images ?? []) as CharacterReferenceImage[],
       ),
+      clip_suggestions: getClipSuggestionsForSlug(char.slug),
     },
   };
 }
@@ -172,6 +175,7 @@ export async function getCharacterById(id: string): Promise<{
         char,
         (images ?? []) as CharacterReferenceImage[],
       ),
+      clip_suggestions: getClipSuggestionsForSlug(char.slug),
     },
   };
 }

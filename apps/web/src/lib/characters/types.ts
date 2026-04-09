@@ -1,3 +1,5 @@
+import type { CharacterClipSuggestions } from "./clip-suggestions";
+
 export interface CharacterAppearance {
   age_range: string;
   gender_presentation: string;
@@ -106,6 +108,8 @@ export interface Character {
 
 export interface CharacterWithImages extends Character {
   reference_images: CharacterReferenceImage[];
+  /** Curated ideas for /create (canonical slugs only). */
+  clip_suggestions?: CharacterClipSuggestions;
 }
 
 /**

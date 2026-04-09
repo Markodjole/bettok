@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Upload, Loader2, ImageIcon, Film, Trash2, Users, ChevronRight, Plus, ArrowLeft, X } from "lucide-react";
+import { CharacterFieldWithSuggestions } from "@/components/create/character-field-suggestions";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1017,31 +1018,22 @@ function CreatePageClient() {
                           )}
                         </div>
                       </button>
-                      <div className="space-y-1.5">
-                        <label className="text-sm font-medium" htmlFor="locationText">
-                          Location / Setting
-                        </label>
-                        <p className="text-[11px] text-muted-foreground">
-                          Sent only as setting — describe movement below so nothing is duplicated or cut off.
-                        </p>
-                        <Input
-                          id="locationText"
-                          placeholder="e.g. rooftop bar, park bench, city street"
-                          value={locationText}
-                          onChange={(e) => setLocationText(e.target.value)}
-                          maxLength={LOCATION_TEXT_MAX}
-                        />
-                        <p
-                          className={cn(
-                            "text-xs text-right",
-                            locationText.length > LOCATION_TEXT_MAX * 0.9
-                              ? "text-amber-600 dark:text-amber-500"
-                              : "text-muted-foreground",
-                          )}
-                        >
-                          {locationText.length}/{LOCATION_TEXT_MAX}
-                        </p>
-                      </div>
+                      <CharacterFieldWithSuggestions
+                        id="locationText"
+                        label="Location / Setting"
+                        hint={
+                          <p className="text-[11px] text-muted-foreground">
+                            Sent only as setting — describe movement below so nothing is duplicated or cut off.
+                            Focus here for setting ideas tuned to {selectedCharacter.name}.
+                          </p>
+                        }
+                        placeholder="e.g. rooftop bar, park bench, city street"
+                        value={locationText}
+                        onChange={setLocationText}
+                        maxLength={LOCATION_TEXT_MAX}
+                        suggestions={selectedCharacter.clip_suggestions?.locations ?? []}
+                        suggestionsTitle={`Settings for ${selectedCharacter.name} (Kling-friendly, readable pacing)`}
+                      />
 
                       <button
                         type="button"
@@ -1280,63 +1272,105 @@ function CreatePageClient() {
 
               {/* Structured scene input */}
               <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium" htmlFor="actionText">
-                    Describe movements
-                  </label>
-                  {mode === "character" && selectedCharacter ? (
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      Describe what happens around {selectedCharacter.name} (place, people, tension). How they move and react comes from their profile — not a new role or personality you invent for them.
-                    </p>
-                  ) : null}
-                  <textarea
-                    id="actionText"
-                    placeholder={actionPlaceholder}
-                    value={actionText}
-                    onChange={(e) => setActionText(e.target.value)}
-                    maxLength={ACTION_TEXT_MAX}
-                    disabled={!hasSource}
-                    rows={5}
-                    className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 resize-y min-h-[120px]"
-                  />
-                  <p
-                    className={cn(
-                      "text-xs text-right",
-                      actionText.length > ACTION_TEXT_MAX * 0.9
-                        ? "text-amber-600 dark:text-amber-500"
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    {actionText.length}/{ACTION_TEXT_MAX}
-                  </p>
-                </div>
+                {mode === "character" && selectedCharacter ? (
+                  <>
+                    <CharacterFieldWithSuggestions
+                      id="actionText"
+                      label="Describe movements"
+                      hint={
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          Describe what happens around {selectedCharacter.name} (place, people, tension). How they
+                          move and react comes from their profile — not a new role you invent. Focus the field for
+                          scene ideas: one or two clear motions per beat, natural speed for short video.
+                        </p>
+                      }
+                      placeholder={actionPlaceholder}
+                      value={actionText}
+                      onChange={setActionText}
+                      maxLength={ACTION_TEXT_MAX}
+                      disabled={!hasSource}
+                      multiline
+                      rows={5}
+                      textAreaClassName="min-h-[120px]"
+                      suggestions={selectedCharacter.clip_suggestions?.actions ?? []}
+                      suggestionsTitle={`Scene ideas for ${selectedCharacter.name}`}
+                    />
+                    <CharacterFieldWithSuggestions
+                      id="tensionText"
+                      label={
+                        <>
+                          Cliffhanger / ending beat{" "}
+                          <span className="text-muted-foreground font-normal">(optional)</span>
+                        </>
+                      }
+                      placeholder={tensionPlaceholder}
+                      value={tensionText}
+                      onChange={setTensionText}
+                      maxLength={TENSION_TEXT_MAX}
+                      disabled={!hasSource}
+                      multiline
+                      rows={3}
+                      textAreaClassName="min-h-[72px]"
+                      suggestions={selectedCharacter.clip_suggestions?.cliffhangers ?? []}
+                      suggestionsTitle={`Dilemma & tension beats for ${selectedCharacter.name}`}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-medium" htmlFor="actionText">
+                        Describe movements
+                      </label>
+                      <textarea
+                        id="actionText"
+                        placeholder={actionPlaceholder}
+                        value={actionText}
+                        onChange={(e) => setActionText(e.target.value)}
+                        maxLength={ACTION_TEXT_MAX}
+                        disabled={!hasSource}
+                        rows={5}
+                        className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 resize-y min-h-[120px]"
+                      />
+                      <p
+                        className={cn(
+                          "text-xs text-right",
+                          actionText.length > ACTION_TEXT_MAX * 0.9
+                            ? "text-amber-600 dark:text-amber-500"
+                            : "text-muted-foreground",
+                        )}
+                      >
+                        {actionText.length}/{ACTION_TEXT_MAX}
+                      </p>
+                    </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium" htmlFor="tensionText">
-                    Cliffhanger / ending beat{" "}
-                    <span className="text-muted-foreground font-normal">(optional)</span>
-                  </label>
-                  <textarea
-                    id="tensionText"
-                    placeholder={tensionPlaceholder}
-                    value={tensionText}
-                    onChange={(e) => setTensionText(e.target.value)}
-                    maxLength={TENSION_TEXT_MAX}
-                    disabled={!hasSource}
-                    rows={3}
-                    className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 resize-y min-h-[72px]"
-                  />
-                  <p
-                    className={cn(
-                      "text-xs text-right",
-                      tensionText.length > TENSION_TEXT_MAX * 0.9
-                        ? "text-amber-600 dark:text-amber-500"
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    {tensionText.length}/{TENSION_TEXT_MAX}
-                  </p>
-                </div>
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-medium" htmlFor="tensionText">
+                        Cliffhanger / ending beat{" "}
+                        <span className="text-muted-foreground font-normal">(optional)</span>
+                      </label>
+                      <textarea
+                        id="tensionText"
+                        placeholder={tensionPlaceholder}
+                        value={tensionText}
+                        onChange={(e) => setTensionText(e.target.value)}
+                        maxLength={TENSION_TEXT_MAX}
+                        disabled={!hasSource}
+                        rows={3}
+                        className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 resize-y min-h-[72px]"
+                      />
+                      <p
+                        className={cn(
+                          "text-xs text-right",
+                          tensionText.length > TENSION_TEXT_MAX * 0.9
+                            ? "text-amber-600 dark:text-amber-500"
+                            : "text-muted-foreground",
+                        )}
+                      >
+                        {tensionText.length}/{TENSION_TEXT_MAX}
+                      </p>
+                    </div>
+                  </>
+                )}
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-4">
                   <div className="space-y-2">
