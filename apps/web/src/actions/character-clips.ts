@@ -28,6 +28,7 @@ import {
   extractContainerLocationHintFromBytes,
   probeVideoFromBytes,
   sampleFrames,
+  transcodeToH264Mp4,
 } from "@/video-intelligence/frame-sampler";
 import type { SampledFrame } from "@/video-intelligence/types";
 import type { BaseScene, MultiScene, EnhancedPlot, PredictionStarter } from "./image-pattern-clips";
@@ -1488,7 +1489,9 @@ export async function processCharacterOwnerSetupUpload(input: {
     }
 
     const ext = path.split(".").pop()?.toLowerCase() || "mp4";
-    let meta = await probeVideoFromBytes(videoBytes, ext === "mov" ? "mov" : ext === "webm" ? "webm" : "mp4");
+    const containerExt =
+      ext === "mov" || ext === "webm" || ext === "m4v" || ext === "mkv" ? ext : "mp4";
+    let meta = await probeVideoFromBytes(videoBytes, containerExt);
     if (meta.durationMs < OWNER_SETUP_MIN_MS) {
       return {
         error: `Clip must be at least ${OWNER_SETUP_MIN_MS / 1000}s (got ${(meta.durationMs / 1000).toFixed(1)}s).`,
@@ -1514,22 +1517,42 @@ export async function processCharacterOwnerSetupUpload(input: {
 
     const containerLocationHint = await extractContainerLocationHintFromBytes(
       videoBytes,
-      ext === "mov" ? "mov" : ext === "webm" ? "webm" : "mp4",
+      containerExt,
     );
 
     let sampled: SampledFrame[];
     let audioForInfer: ClipAudioTranscription;
     try {
       [sampled, audioForInfer] = await Promise.all([
-        sampleFrames(videoBytes),
-        transcribeClipAudioFromVideoBytes(videoBytes),
+        sampleFrames(videoBytes, containerExt),
+        transcribeClipAudioFromVideoBytes(videoBytes, containerExt),
       ]);
     } catch (e: any) {
-      logLine("owner-upload", "sample_or_audio.failed", { message: e?.message });
-      return {
-        error:
-          "Could not read video frames for analysis. Export as H.264 MP4 (recommended) or MOV and try again.",
-      };
+      logLine("owner-upload", "sample_or_audio.retry_transcode", { message: e?.message });
+      try {
+        videoBytes = new Uint8Array(await transcodeToH264Mp4(videoBytes, containerExt));
+        meta = await probeVideoFromBytes(videoBytes, "mp4");
+        if (meta.durationMs > OWNER_SETUP_MAX_MS) {
+          const trimmed = await trimVideoAt(videoBytes, OWNER_SETUP_MAX_MS / 1000);
+          videoBytes = new Uint8Array(trimmed);
+          meta = await probeVideoFromBytes(videoBytes, "mp4");
+        }
+        if (meta.durationMs < OWNER_SETUP_MIN_MS) {
+          return {
+            error: `Clip must be at least ${OWNER_SETUP_MIN_MS / 1000}s after normalizing the video.`,
+          };
+        }
+        [sampled, audioForInfer] = await Promise.all([
+          sampleFrames(videoBytes, "mp4"),
+          transcribeClipAudioFromVideoBytes(videoBytes, "mp4"),
+        ]);
+      } catch (e2: any) {
+        logLine("owner-upload", "sample_or_audio.failed", { message: e2?.message });
+        return {
+          error:
+            "Could not read this video for analysis. Try a shorter clip, or export as H.264 MP4 from Photos / iMovie and upload again.",
+        };
+      }
     }
 
     let sceneSummary: string;
@@ -1592,7 +1615,7 @@ export async function processCharacterOwnerSetupUpload(input: {
 
     let audioForPublish = audioForInfer;
     if (didVideoTrimAfterInfer) {
-      const again = await transcribeClipAudioFromVideoBytes(videoBytes);
+      const again = await transcribeClipAudioFromVideoBytes(videoBytes, "mp4");
       if (again.transcript?.trim()) audioForPublish = again;
     }
     const spokenDialogue = (audioForPublish.transcript || "").trim().slice(0, 500);

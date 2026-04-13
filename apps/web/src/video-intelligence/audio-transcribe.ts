@@ -9,6 +9,7 @@ import { writeFile, readFile, mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { getFfmpegBinaryPath } from "@/lib/ffmpeg-paths";
+import { safeContainerExt } from "./frame-sampler";
 import { log } from "./utils";
 
 const MAX_AUDIO_SEC = 120;
@@ -32,6 +33,7 @@ export type ClipAudioTranscription = {
  */
 export async function transcribeClipAudioFromVideoBytes(
   videoBytes: Uint8Array,
+  fileExt = "mp4",
 ): Promise<ClipAudioTranscription> {
   const apiKey = process.env.LLM_API_KEY;
   if (!apiKey || process.env.LLM_PROVIDER !== "openai") {
@@ -40,7 +42,8 @@ export async function transcribeClipAudioFromVideoBytes(
   }
 
   const dir = await mkdtemp(join(tmpdir(), "vi-audio-"));
-  const videoPath = join(dir, "input.mp4");
+  const ext = safeContainerExt(fileExt);
+  const videoPath = join(dir, `input.${ext}`);
   const wavPath = join(dir, "speech.wav");
 
   try {

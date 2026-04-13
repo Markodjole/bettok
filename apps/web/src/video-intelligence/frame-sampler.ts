@@ -93,7 +93,7 @@ export async function probeVideoFileOnDisk(videoPath: string): Promise<ProbedVid
 /** Write bytes to a temp file, probe, delete temp dir. */
 export async function probeVideoFromBytes(videoBytes: Uint8Array, fileExt = "mp4"): Promise<ProbedVideoMeta> {
   const dir = await mkdtemp(join(tmpdir(), "probe-vid-"));
-  const ext = /^[a-z0-9]+$/i.test(fileExt) ? fileExt : "mp4";
+  const ext = /^[a-z0-9]+$/i.test(fileExt) ? fileExt.toLowerCase() : "mp4";
   const inPath = join(dir, `probe_input.${ext}`);
   await writeFile(inPath, videoBytes);
   try {
@@ -103,9 +103,75 @@ export async function probeVideoFromBytes(videoBytes: Uint8Array, fileExt = "mp4
   }
 }
 
-export async function sampleFrames(videoBytes: Uint8Array): Promise<SampledFrame[]> {
+export function safeContainerExt(fileExt: string): string {
+  const e = fileExt.replace(/^\./, "").toLowerCase();
+  if (/^[a-z0-9]+$/.test(e) && ["mp4", "mov", "webm", "m4v", "mkv", "avi"].includes(e)) return e;
+  return "mp4";
+}
+
+/**
+ * Re-encode to H.264 + AAC MP4 so ffmpeg/ffprobe can sample frames (fixes iPhone HEVC MOV,
+ * odd WebM, wrong-on-disk extensions, etc.).
+ */
+export async function transcodeToH264Mp4(
+  videoBytes: Uint8Array,
+  fileExt: string,
+  timeoutMs = 120_000,
+): Promise<Uint8Array> {
+  const dir = await mkdtemp(join(tmpdir(), "vi-h264-"));
+  const ext = safeContainerExt(fileExt);
+  const inPath = join(dir, `in.${ext}`);
+  const outPath = join(dir, "out.mp4");
+  await writeFile(inPath, videoBytes);
+
+  /** Downscale tall 4K phone clips so Vercel stays under memory limits (analysis only needs ~512px). */
+  const analysisScale = "scale=-2:1280";
+
+  const baseVideoArgs = [
+    "-y",
+    "-loglevel",
+    "error",
+    "-threads",
+    "2",
+    "-i",
+    inPath,
+    "-vf",
+    analysisScale,
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-crf",
+    "23",
+    "-pix_fmt",
+    "yuv420p",
+    "-movflags",
+    "+faststart",
+  ];
+
+  try {
+    try {
+      await ffmpegExec(
+        [...baseVideoArgs, "-c:a", "aac", "-b:a", "128k", "-ar", "48000", outPath],
+        timeoutMs,
+      );
+    } catch {
+      await ffmpegExec([...baseVideoArgs, "-an", outPath], timeoutMs);
+    }
+    const out = await readFile(outPath);
+    if (out.byteLength < 2000) {
+      throw new Error("Transcoded output too small");
+    }
+    return new Uint8Array(out);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export async function sampleFrames(videoBytes: Uint8Array, fileExt = "mp4"): Promise<SampledFrame[]> {
   const dir = await mkdtemp(join(tmpdir(), "vi-frames-"));
-  const inPath = join(dir, "input.mp4");
+  const ext = safeContainerExt(fileExt);
+  const inPath = join(dir, `input.${ext}`);
   await writeFile(inPath, videoBytes);
 
   try {

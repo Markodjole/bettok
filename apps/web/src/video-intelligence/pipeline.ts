@@ -8,7 +8,7 @@
 
 import { createServiceClient } from "@/lib/supabase/server";
 import { transcribeClipAudioFromVideoBytes } from "./audio-transcribe";
-import { sampleFrames } from "./frame-sampler";
+import { sampleFrames, transcodeToH264Mp4, safeContainerExt } from "./frame-sampler";
 import { extractObservedFacts } from "./vision-extractor";
 import { extractTemporalFeatures } from "./temporal-extractor";
 import type {
@@ -108,18 +108,32 @@ async function runPipeline(analysisId: string, clipNodeId: string) {
       .download(clip.video_storage_path as string);
 
     if (!videoBlob) return fail("Video not found in storage");
-    const videoBytes = new Uint8Array(await videoBlob.arrayBuffer());
+    const storagePath = clip.video_storage_path as string;
+    const extFromPath = safeContainerExt(storagePath.split(".").pop() || "mp4");
+    let workBytes = new Uint8Array(await videoBlob.arrayBuffer());
+    let workExt = extFromPath;
 
-    // Step 1: Sample frames
+    // Step 1: Sample frames (HEVC MOV / odd WebM → transcode to H.264 MP4 once, then retry)
     await setStatus("sampling_frames");
-    const frames = await sampleFrames(videoBytes);
+    let frames;
+    try {
+      frames = await sampleFrames(workBytes, workExt);
+    } catch (e) {
+      log("pipeline", "sample_transcode_retry", {
+        analysisId,
+        message: (e as Error)?.message?.slice(0, 200),
+      });
+      workBytes = new Uint8Array(await transcodeToH264Mp4(workBytes, workExt));
+      workExt = "mp4";
+      frames = await sampleFrames(workBytes, workExt);
+    }
     log("pipeline", "frames_sampled", { analysisId, count: frames.length });
 
     // Step 2: Vision + audio ASR in parallel (speech affects temporal / betting context)
     await setStatus("extracting_vision");
     const [visionPack, audioAsr] = await Promise.all([
       extractObservedFacts(frames),
-      transcribeClipAudioFromVideoBytes(videoBytes),
+      transcribeClipAudioFromVideoBytes(workBytes, workExt),
     ]);
     const { observed, warnings: visionWarnings } = visionPack;
     log("pipeline", "vision_done", {
