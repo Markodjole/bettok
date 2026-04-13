@@ -8,13 +8,14 @@ import { createReadStream } from "fs";
 import { writeFile, readFile, mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+import { getFfmpegBinaryPath } from "@/lib/ffmpeg-paths";
 import { log } from "./utils";
 
 const MAX_AUDIO_SEC = 120;
 
 function ffmpegAudio(args: string[], timeoutMs = 90_000): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile("ffmpeg", args, { timeout: timeoutMs }, (err, _stdout, stderr) => {
+    execFile(getFfmpegBinaryPath(), args, { timeout: timeoutMs }, (err, _stdout, stderr) => {
       if (err) reject(new Error(`${err.message}\n${stderr}`));
       else resolve();
     });

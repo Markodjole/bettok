@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  /** Native binaries: keep resolvable at runtime on Vercel (do not bundle into webpack). */
+  serverExternalPackages: ["ffmpeg-static", "ffprobe-static"],
   transpilePackages: [
     "@bettok/types",
     "@bettok/core",

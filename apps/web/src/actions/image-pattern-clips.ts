@@ -9,6 +9,7 @@ import { falLongJobOptions, getFalClient } from "@/lib/fal/server";
 import { createServerClient, createServiceClient } from "@/lib/supabase/server";
 import { seedPredictionStartersForClip } from "./predictions";
 import { mergeNegativePromptLayers } from "@/lib/llm/character-clip-json";
+import { getFfmpegBinaryPath } from "@/lib/ffmpeg-paths";
 
 function logLine(jobId: string, phase: string, extra?: Record<string, unknown>) {
   const ts = new Date().toISOString();
@@ -59,7 +60,7 @@ export async function trimVideoAt(videoBytes: Uint8Array, cutSeconds: number): P
   await writeFile(inPath, videoBytes);
   await new Promise<void>((resolve, reject) => {
     execFile(
-      "ffmpeg",
+      getFfmpegBinaryPath(),
       ["-y", "-i", inPath, "-t", String(cutSeconds), "-c", "copy", "-avoid_negative_ts", "1", outPath],
       { timeout: 30_000 },
       (err) => (err ? reject(err) : resolve()),

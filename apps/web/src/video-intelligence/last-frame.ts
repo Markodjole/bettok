@@ -7,10 +7,11 @@ import { execFile } from "child_process";
 import { writeFile, readFile, mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+import { getFfmpegBinaryPath, getFfprobeBinaryPath } from "@/lib/ffmpeg-paths";
 
 function ffmpegExec(args: string[], timeoutMs = 30_000): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("ffmpeg", args, { timeout: timeoutMs }, (err, _stdout, stderr) => {
+    execFile(getFfmpegBinaryPath(), args, { timeout: timeoutMs }, (err, _stdout, stderr) => {
       if (err) reject(new Error(`ffmpeg failed: ${err.message}\n${stderr}`));
       else resolve(stderr);
     });
@@ -19,7 +20,7 @@ function ffmpegExec(args: string[], timeoutMs = 30_000): Promise<string> {
 
 function ffprobeExec(args: string[], timeoutMs = 10_000): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("ffprobe", args, { timeout: timeoutMs }, (err, stdout, stderr) => {
+    execFile(getFfprobeBinaryPath(), args, { timeout: timeoutMs }, (err, stdout, stderr) => {
       if (err) reject(new Error(`ffprobe failed: ${err.message}\n${stderr}`));
       else resolve(stdout);
     });

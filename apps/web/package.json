@@ -11,8 +11,8 @@
   "dependencies": {
     "@bettok/betting": "workspace:*",
     "@bettok/core": "workspace:*",
-    "@bettok/fair-selection": "workspace:*",
     "@bettok/db": "workspace:*",
+    "@bettok/fair-selection": "workspace:*",
     "@bettok/story-engine": "workspace:*",
     "@bettok/types": "workspace:*",
     "@bettok/ui": "workspace:*",
@@ -36,6 +36,8 @@
     "@tanstack/react-query": "^5.60.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
+    "ffmpeg-static": "^5.3.0",
+    "ffprobe-static": "^3.1.0",
     "framer-motion": "^11.12.0",
     "lucide-react": "^0.460.0",
     "next": "^15.1.0",

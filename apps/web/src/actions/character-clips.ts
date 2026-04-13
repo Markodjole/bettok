@@ -51,6 +51,7 @@ import {
   characterToPromptContext,
   characterToKlingIdentity,
 } from "@/lib/characters/types";
+import { getFfmpegBinaryPath } from "@/lib/ffmpeg-paths";
 import type { Character, CharacterWithImages } from "@/lib/characters/types";
 
 // ---------------------------------------------------------------------------
@@ -100,7 +101,7 @@ async function createMockClipMp4(): Promise<Uint8Array> {
   try {
     await new Promise<void>((resolve, reject) => {
       execFile(
-        "ffmpeg",
+        getFfmpegBinaryPath(),
         [
           "-y",
           "-f",
