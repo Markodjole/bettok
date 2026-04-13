@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, Sparkles } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -94,6 +95,24 @@ export default function EditProfilePage() {
             <ArrowLeft className="h-4 w-4" />
             Back
           </Button>
+
+          <Card className="mb-4">
+            <CardHeader>
+              <CardTitle>BetTok character</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Build or refresh the same structured character data we use for Viktor, Darius, and the rest —
+                photos, quick choices, questionnaire, optional intro video.
+              </p>
+              <Button asChild variant="outline" className="w-full justify-start gap-2">
+                <Link href="/onboarding/character?update=1">
+                  <Sparkles className="h-4 w-4" />
+                  Open character builder
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader>

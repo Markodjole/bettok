@@ -14,6 +14,8 @@ export interface FeedClip {
   video_storage_path: string | null;
   poster_storage_path: string | null;
   scene_summary: string | null;
+  /** GPS / container tags + vision-derived place line for owner uploads */
+  capture_location_text: string | null;
   /** On-screen spoken line(s); shown as subtitles on feed when set */
   transcript: string | null;
   genre: string | null;

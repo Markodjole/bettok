@@ -90,6 +90,8 @@ export const TEMPORAL_EXTRACTION_SYSTEM = `You are a temporal video understandin
 
 Given the per-frame observations (JSON) from a short video clip, analyze the temporal structure and return JSON with these fields.
 
+When the user message includes an "AUDIO (automatic speech recognition)" section, treat that transcript as ground truth for spoken language. Reconcile it with any visual "dialogueLines" from observations (prefer audio wording for what was said; use visuals for who is on screen and physical state). Let speech influence mainStory, unresolvedQuestions, availableOptions, nextStepCandidates, and spokenDialogue.
+
 YOUR #1 JOB: produce useful "availableOptions" and "nextStepCandidates". These are what the prediction/continuation system consumes. If you return empty arrays here, the entire pipeline fails. Always generate them.
 
 ═══ EXTRACT ═══
@@ -197,8 +199,22 @@ export function buildFrameExtractionUserMessage(frameCount: number): string {
   return `Analyze these ${frameCount} frames from a short vertical video clip. They are sampled at regular intervals from start to end. Return a single merged JSON object with all observations.`;
 }
 
-export function buildTemporalUserMessage(observedJson: string): string {
-  return `Here are the per-frame observations from a short video clip:\n\n${observedJson}\n\nAnalyze the temporal structure, derive intents, options, and continuation context.
+/** Optional Whisper ASR passed into temporal extraction (speech drives bets and story). */
+export type TemporalAudioContext = {
+  transcript: string | null;
+  language?: string | null;
+};
+
+export function buildTemporalUserMessage(
+  observedJson: string,
+  audio?: TemporalAudioContext | null,
+): string {
+  const asr = audio?.transcript?.trim();
+  const audioBlock = asr
+    ? `\n\n=== AUDIO (automatic speech recognition, Whisper) ===\nLanguage (hint): ${audio?.language ?? "unknown"}\nTranscript (verbatim):\n"""${asr}"""\n\nUse this with the visual JSON above. Speech can reveal commitments, questions, names, and stakes that are not obvious from pixels alone.\n`
+    : "";
+
+  return `Here are the per-frame observations from a short video clip:\n\n${observedJson}${audioBlock}\n\nAnalyze the temporal structure, derive intents, options, and continuation context.
 
 CRITICAL REMINDERS:
 - "availableOptions" MUST NOT be empty. Think about what the character can realistically DO given the current state of the scene and objects.

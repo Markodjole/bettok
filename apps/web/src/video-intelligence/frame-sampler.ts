@@ -43,6 +43,65 @@ export async function getVideoDurationMs(videoPath: string): Promise<number> {
   return Math.round(parseFloat(raw.trim()) * 1000);
 }
 
+export type ProbedVideoMeta = {
+  durationMs: number;
+  width: number;
+  height: number;
+  bitRate: number;
+  codec: string;
+};
+
+/** ffprobe a file on disk (path should use a sensible extension for the container). */
+export async function probeVideoFileOnDisk(videoPath: string): Promise<ProbedVideoMeta> {
+  const raw = await ffprobeExec(
+    [
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=width,height,codec_name,bit_rate",
+      "-show_entries",
+      "format=duration,bit_rate",
+      "-of",
+      "json",
+      videoPath,
+    ],
+    20_000,
+  );
+  const o = JSON.parse(raw) as {
+    streams?: Array<{ width?: number; height?: number; codec_name?: string; bit_rate?: string }>;
+    format?: { duration?: string; bit_rate?: string };
+  };
+  const stream = o.streams?.[0];
+  const format = o.format;
+  const durationSec = parseFloat(format?.duration || "0");
+  const br =
+    Number(stream?.bit_rate) ||
+    Number(format?.bit_rate) ||
+    0;
+  return {
+    durationMs: Math.round(durationSec * 1000),
+    width: Number(stream?.width) || 0,
+    height: Number(stream?.height) || 0,
+    bitRate: br,
+    codec: String(stream?.codec_name || ""),
+  };
+}
+
+/** Write bytes to a temp file, probe, delete temp dir. */
+export async function probeVideoFromBytes(videoBytes: Uint8Array, fileExt = "mp4"): Promise<ProbedVideoMeta> {
+  const dir = await mkdtemp(join(tmpdir(), "probe-vid-"));
+  const ext = /^[a-z0-9]+$/i.test(fileExt) ? fileExt : "mp4";
+  const inPath = join(dir, `probe_input.${ext}`);
+  await writeFile(inPath, videoBytes);
+  try {
+    return await probeVideoFileOnDisk(inPath);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 export async function sampleFrames(videoBytes: Uint8Array): Promise<SampledFrame[]> {
   const dir = await mkdtemp(join(tmpdir(), "vi-frames-"));
   const inPath = join(dir, "input.mp4");
@@ -80,6 +139,82 @@ export async function sampleFrames(videoBytes: Uint8Array): Promise<SampledFrame
     }
 
     return frames;
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Parse ISO6709-ish strings often found in QuickTime (e.g. +37.3323-122.0312/). */
+function formatIso6709Location(raw: string): string | null {
+  const t = raw.trim();
+  if (!t) return null;
+  const m = t.match(/([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)/);
+  if (!m) return t.length > 200 ? `${t.slice(0, 197)}…` : t;
+  const lat = parseFloat(m[1]);
+  const lon = parseFloat(m[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return t.length > 200 ? `${t.slice(0, 197)}…` : t;
+  return `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
+}
+
+/**
+ * Best-effort location hint from container metadata (GPS / QuickTime location tags).
+ * Does not call the network; uses ffprobe only.
+ */
+export async function extractContainerLocationHintFromBytes(
+  videoBytes: Uint8Array,
+  fileExt = "mp4",
+): Promise<string | null> {
+  const dir = await mkdtemp(join(tmpdir(), "ffprobe-loc-"));
+  const ext = /^[a-z0-9]+$/i.test(fileExt) ? fileExt : "mp4";
+  const inPath = join(dir, `in.${ext}`);
+  await writeFile(inPath, videoBytes);
+  try {
+    const raw = await ffprobeExec(
+      ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", inPath],
+      20_000,
+    );
+    const o = JSON.parse(raw) as {
+      format?: { tags?: Record<string, string> };
+      streams?: Array<{ tags?: Record<string, string> }>;
+    };
+    const merged: Record<string, string> = { ...(o.format?.tags || {}) };
+    for (const s of o.streams || []) {
+      for (const [k, v] of Object.entries(s.tags || {})) {
+        if (typeof v === "string" && v.trim()) merged[k] = v.trim();
+      }
+    }
+    const lower = new Map<string, string>();
+    for (const [k, v] of Object.entries(merged)) {
+      lower.set(k.toLowerCase(), v);
+    }
+
+    const iso6709 =
+      lower.get("com.apple.quicktime.location.iso6709") ||
+      lower.get("location-iso6709") ||
+      lower.get("location_iso6709");
+    if (iso6709) {
+      const formatted = formatIso6709Location(iso6709);
+      if (formatted) return `From device metadata: ${formatted}`;
+    }
+
+    const loc =
+      lower.get("location") ||
+      lower.get("location-eng") ||
+      lower.get("location_eng") ||
+      lower.get("com.apple.quicktime.location.name");
+    if (loc && loc.length > 2) {
+      return loc.length > 200 ? `From file: ${loc.slice(0, 197)}…` : `From file: ${loc}`;
+    }
+
+    const lat = lower.get("gps_latitude") || lower.get("latitude");
+    const lon = lower.get("gps_longitude") || lower.get("longitude");
+    if (lat && lon) {
+      return `From file: ${lat}, ${lon}`.slice(0, 240);
+    }
+
+    return null;
+  } catch {
+    return null;
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }

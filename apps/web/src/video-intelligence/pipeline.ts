@@ -7,6 +7,7 @@
  */
 
 import { createServiceClient } from "@/lib/supabase/server";
+import { transcribeClipAudioFromVideoBytes } from "./audio-transcribe";
 import { sampleFrames } from "./frame-sampler";
 import { extractObservedFacts } from "./vision-extractor";
 import { extractTemporalFeatures } from "./temporal-extractor";
@@ -114,19 +115,27 @@ async function runPipeline(analysisId: string, clipNodeId: string) {
     const frames = await sampleFrames(videoBytes);
     log("pipeline", "frames_sampled", { analysisId, count: frames.length });
 
-    // Step 2: Vision extraction (per-frame → observed facts)
+    // Step 2: Vision + audio ASR in parallel (speech affects temporal / betting context)
     await setStatus("extracting_vision");
-    const { observed, warnings: visionWarnings } = await extractObservedFacts(frames);
+    const [visionPack, audioAsr] = await Promise.all([
+      extractObservedFacts(frames),
+      transcribeClipAudioFromVideoBytes(videoBytes),
+    ]);
+    const { observed, warnings: visionWarnings } = visionPack;
     log("pipeline", "vision_done", {
       analysisId,
       characters: observed.characters.length,
       objects: observed.objects.length,
       visibleTexts: observed.visibleTexts.length,
+      asrChars: audioAsr.transcript?.length ?? 0,
     });
 
     // Step 3: Temporal extraction (actions, beats, intents, derived features)
     await setStatus("extracting_temporal");
-    const temporal = await extractTemporalFeatures(observed);
+    const temporal = await extractTemporalFeatures(observed, {
+      transcript: audioAsr.transcript,
+      language: audioAsr.language,
+    });
 
     const mergedObserved = {
       ...observed,
@@ -157,11 +166,18 @@ async function runPipeline(analysisId: string, clipNodeId: string) {
       analyzedAt: new Date().toISOString(),
     };
 
-    // Update transcript on clip_nodes if we got spoken dialogue
-    if (temporal.derived.spokenDialogue) {
+    // Prefer Whisper transcript when present; else temporal one-liner from vision+LLM
+    const whisper = audioAsr.transcript?.trim() || null;
+    const fromTemporal = temporal.derived.spokenDialogue?.trim() || null;
+    const transcriptToStore = whisper
+      ? whisper.slice(0, 500)
+      : fromTemporal
+        ? fromTemporal.slice(0, 500)
+        : null;
+    if (transcriptToStore) {
       await serviceClient
         .from("clip_nodes")
-        .update({ transcript: temporal.derived.spokenDialogue.slice(0, 500) })
+        .update({ transcript: transcriptToStore })
         .eq("id", clipNodeId);
     }
 

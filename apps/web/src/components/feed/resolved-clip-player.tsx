@@ -4,7 +4,13 @@ import { useRef, useEffect, useState, useCallback } from "react";
 import { useFeedStore } from "@/stores/feed-store";
 import { getMediaUrl } from "@/lib/utils";
 import { ResultOverlay } from "./result-overlay";
-import { getUserBetsForClip } from "@/actions/bets";
+import {
+  getUserBetsForClip,
+  getClipSettlementDetails,
+  getUserCharacterBettingSummary,
+  type ClipSettlementMarketRow,
+  type UserCharacterBettingSummary,
+} from "@/actions/bets";
 import type { FeedClip } from "@/actions/clips";
 import { RotateCcw } from "lucide-react";
 
@@ -21,6 +27,8 @@ export function ResolvedClipPlayer({ clip, isActive }: ResolvedClipPlayerProps) 
   const browserForcedMuteRef = useRef(false);
   const [phase, setPhase] = useState<Phase>("part1");
   const [userBets, setUserBets] = useState<Array<Record<string, unknown>>>([]);
+  const [settlementMarkets, setSettlementMarkets] = useState<ClipSettlementMarketRow[]>([]);
+  const [characterStats, setCharacterStats] = useState<UserCharacterBettingSummary | null>(null);
   const [progress, setProgress] = useState(0);
   const isMuted = useFeedStore((s) => s.isMuted);
 
@@ -47,8 +55,18 @@ export function ResolvedClipPlayer({ clip, isActive }: ResolvedClipPlayerProps) 
 
   useEffect(() => {
     if (clip.status !== "settled") return;
-    getUserBetsForClip(clip.id).then(setUserBets);
-  }, [clip.id, clip.status]);
+    void Promise.all([
+      getUserBetsForClip(clip.id),
+      getClipSettlementDetails(clip.id, resolutionReason),
+      clip.character_id
+        ? getUserCharacterBettingSummary(clip.character_id)
+        : Promise.resolve(null),
+    ]).then(([bets, markets, stats]) => {
+      setUserBets(bets as Array<Record<string, unknown>>);
+      setSettlementMarkets(markets);
+      setCharacterStats(stats);
+    });
+  }, [clip.id, clip.status, clip.character_id, resolutionReason]);
 
   // Playback control
   useEffect(() => {
@@ -190,6 +208,9 @@ export function ResolvedClipPlayer({ clip, isActive }: ResolvedClipPlayerProps) 
         <ResultOverlay
           winningOutcomeText={winningOutcome}
           resolutionReasonText={resolutionReason}
+          settlementMarkets={settlementMarkets}
+          characterName={clip.character_name ?? null}
+          characterStats={characterStats}
           userBets={
             userBets as Array<{
               id: string;
@@ -197,6 +218,10 @@ export function ResolvedClipPlayer({ clip, isActive }: ResolvedClipPlayerProps) 
               stake_amount: number;
               payout_amount: number | null;
               status: string;
+              prediction_markets?: {
+                canonical_text?: string | null;
+                raw_creator_input?: string | null;
+              } | null;
             }>
           }
         />
@@ -207,7 +232,7 @@ export function ResolvedClipPlayer({ clip, isActive }: ResolvedClipPlayerProps) 
         <button
           type="button"
           onClick={handleReplay}
-          className="absolute left-1/2 top-[38%] z-30 -translate-x-1/2 flex items-center gap-2 rounded-full bg-white/15 backdrop-blur-sm px-5 py-2.5 text-white/90 hover:bg-white/25 transition-colors touch-manipulation"
+          className="absolute bottom-28 left-1/2 z-30 -translate-x-1/2 flex items-center gap-2 rounded-full bg-white/15 backdrop-blur-sm px-5 py-2.5 text-white/90 hover:bg-white/25 transition-colors touch-manipulation"
         >
           <RotateCcw className="h-5 w-5" />
           <span className="text-sm font-medium">Replay</span>

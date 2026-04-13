@@ -1,6 +1,7 @@
 "use server";
 
 import { createServerClient, createServiceClient } from "@/lib/supabase/server";
+import { parseMarketResultsFromResolutionText } from "@/lib/bet-display";
 
 export async function placeBet(input: {
   prediction_market_id: string;
@@ -174,9 +175,136 @@ export async function getUserBetsForClip(clipNodeId: string) {
 
   const { data } = await supabase
     .from("bets")
-    .select("*")
+    .select(
+      `
+      id,
+      side_key,
+      stake_amount,
+      payout_amount,
+      status,
+      prediction_markets ( canonical_text, raw_creator_input )
+    `,
+    )
     .eq("user_id", user.id)
     .eq("clip_node_id", clipNodeId);
 
   return data || [];
+}
+
+export type ClipSettlementMarketRow = {
+  winner_side: "yes" | "no";
+  canonical_text: string;
+  explanation_short: string | null;
+};
+
+/** Per-market winners + short LLM line for the “why” drawer. */
+export async function getClipSettlementDetails(
+  clipNodeId: string,
+  resolutionReasonTextFallback: string
+): Promise<ClipSettlementMarketRow[]> {
+  const supabase = await createServerClient();
+
+  const { data: sr } = await supabase
+    .from("settlement_results")
+    .select("id")
+    .eq("clip_node_id", clipNodeId)
+    .order("settled_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (sr?.id) {
+    const { data: sides } = await supabase
+      .from("settlement_side_results")
+      .select(
+        `
+        winner_side,
+        explanation_short,
+        prediction_markets ( canonical_text )
+      `,
+      )
+      .eq("settlement_result_id", sr.id);
+
+    if (sides?.length) {
+      const rows: ClipSettlementMarketRow[] = [];
+      for (const row of sides) {
+        const ws = row.winner_side as string | null;
+        if (ws !== "yes" && ws !== "no") continue;
+        const pm = row.prediction_markets as { canonical_text?: string | null } | null;
+        rows.push({
+          winner_side: ws,
+          canonical_text: (pm?.canonical_text ?? "Prediction").replace(/\s+/g, " ").trim(),
+          explanation_short:
+            typeof row.explanation_short === "string" ? row.explanation_short : null,
+        });
+      }
+      if (rows.length > 0) return rows;
+    }
+  }
+
+  return parseMarketResultsFromResolutionText(resolutionReasonTextFallback).map((r) => ({
+    ...r,
+    explanation_short: null,
+  }));
+}
+
+export type UserCharacterBettingSummary = {
+  winRatePct: number;
+  settledCount: number;
+  currentWinStreak: number;
+};
+
+/** Win rate + current win streak for this user on clips tagged with the character. */
+export async function getUserCharacterBettingSummary(
+  characterId: string | null | undefined
+): Promise<UserCharacterBettingSummary | null> {
+  if (!characterId) return null;
+
+  const supabase = await createServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const winsFilter = supabase
+    .from("bets")
+    .select("id, clip_nodes!inner(character_id)", { count: "exact", head: true })
+    .eq("user_id", user.id)
+    .eq("clip_nodes.character_id", characterId)
+    .eq("status", "settled_win")
+    .not("settled_at", "is", null);
+
+  const lossesFilter = supabase
+    .from("bets")
+    .select("id, clip_nodes!inner(character_id)", { count: "exact", head: true })
+    .eq("user_id", user.id)
+    .eq("clip_nodes.character_id", characterId)
+    .eq("status", "settled_loss")
+    .not("settled_at", "is", null);
+
+  const [winsRes, lossesRes] = await Promise.all([winsFilter, lossesFilter]);
+
+  const wins = winsRes.count ?? 0;
+  const losses = lossesRes.count ?? 0;
+  const settledCount = wins + losses;
+  if (settledCount === 0) return null;
+
+  const winRatePct = Math.round((wins / settledCount) * 1000) / 10;
+
+  const { data: recent } = await supabase
+    .from("bets")
+    .select("status, settled_at, clip_nodes!inner(character_id)")
+    .eq("user_id", user.id)
+    .eq("clip_nodes.character_id", characterId)
+    .in("status", ["settled_win", "settled_loss"])
+    .not("settled_at", "is", null)
+    .order("settled_at", { ascending: false })
+    .limit(80);
+
+  let currentWinStreak = 0;
+  for (const row of recent || []) {
+    if (row.status === "settled_win") currentWinStreak++;
+    else break;
+  }
+
+  return { winRatePct, settledCount, currentWinStreak };
 }

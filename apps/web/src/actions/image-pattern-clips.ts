@@ -927,7 +927,7 @@ export async function getPendingReviewDraft() {
     .from("clip_generation_jobs")
     .select("id, status, video_storage_path, llm_generation_json, updated_at, generation_mode")
     .eq("user_id", user.id)
-    .in("generation_mode", ["image_pattern", "character"])
+    .in("generation_mode", ["image_pattern", "character", "character_owner_upload"])
     .eq("status", "review")
     .order("updated_at", { ascending: false })
     .limit(20);

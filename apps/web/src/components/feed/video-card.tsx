@@ -26,6 +26,7 @@ import {
   TrendingUp,
   GitBranch,
   Timer,
+  MapPin,
   MoreVertical,
   Trash2,
   Volume2,
@@ -260,6 +261,16 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
             )}
           </div>
         )}
+
+        {clip.capture_location_text?.trim() ? (
+          <p
+            className="flex items-start gap-1.5 rounded-md bg-black/50 px-2.5 py-1.5 text-left text-xs leading-snug text-white/90 shadow-md [text-shadow:0_1px_2px_rgba(0,0,0,0.9)] line-clamp-3"
+            role="note"
+          >
+            <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+            <span>{clip.capture_location_text.trim()}</span>
+          </p>
+        ) : null}
 
         {clip.transcript?.trim() ? (
           <p

@@ -35,6 +35,10 @@ export const profileSchema = z.object({
   total_bets: z.number().int().default(0),
   total_wins: z.number().int().default(0),
   total_predictions: z.number().int().default(0),
+  /** User-owned character used like default seeded characters (same clip / prediction stack). */
+  primary_character_id: z.string().uuid().nullable().optional(),
+  character_onboarding_completed_at: z.string().datetime().nullable().optional(),
+  character_onboarding_draft: z.record(z.unknown()).nullish(),
   created_at: z.string().datetime(),
 });
 

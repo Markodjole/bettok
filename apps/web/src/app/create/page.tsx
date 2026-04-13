@@ -41,8 +41,9 @@ import {
 } from "@/actions/image-pattern-clips";
 import {
   generateFromCharacter,
+  processCharacterOwnerSetupUpload,
   publishCharacterDraft,
-} from "../../actions/character-clips";
+} from "@/actions/character-clips";
 import {
   suggestCharacterClipIdeas,
   type CharacterClipAiOption,
@@ -56,6 +57,13 @@ import {
 } from "@/lib/characters/clip-suggestions";
 import { createBrowserClient, getUserQueued } from "@/lib/supabase/client";
 import { cn, getMediaUrl } from "@/lib/utils";
+import {
+  isLikelyImageFile,
+  isLikelyVideoFile,
+  normalizeImageUploadContentType,
+  normalizeVideoUploadContentType,
+} from "@/lib/storage/upload-content-type";
+import { useUserStore } from "@/stores/user-store";
 
 const PATTERNS_CACHE_KEY = "create:image_patterns:v2";
 const PATTERNS_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -146,6 +154,11 @@ function CreatePageClient() {
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /** Ignore late `getPendingReviewDraft` results after the user started a new generation. */
   const pendingDraftSeqRef = useRef(0);
+
+  const profile = useUserStore((s) => s.profile);
+  const [ownerSetupVideoFile, setOwnerSetupVideoFile] = useState<File | null>(null);
+  const [ownerSetupBusy, setOwnerSetupBusy] = useState(false);
+  const ownerSetupVideoRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -340,8 +353,18 @@ function CreatePageClient() {
     return () => stopFakeProgress();
   }, []);
 
+  useEffect(() => {
+    setOwnerSetupVideoFile(null);
+    if (ownerSetupVideoRef.current) ownerSetupVideoRef.current.value = "";
+  }, [selectedCharacterId]);
+
   const selectedPattern = patterns.find((p) => p.id === selectedPatternId);
   const selectedCharacter = characters.find((c) => c.id === selectedCharacterId);
+  const isCharacterOwner =
+    mode === "character" &&
+    !!selectedCharacter?.creator_user_id &&
+    !!profile?.id &&
+    selectedCharacter.creator_user_id === profile.id;
   const clipBundle = selectedCharacter?.clip_suggestions;
   const locationIdeas = useMemo(
     () => listLocations(clipBundle ?? { scenes: [] }),
@@ -422,8 +445,8 @@ function CreatePageClient() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
-      toast({ title: "Invalid file", description: "Please select an image (JPG, PNG)", variant: "destructive" });
+    if (!isLikelyImageFile(file)) {
+      toast({ title: "Invalid file", description: "Please select an image (JPG, PNG, WebP, HEIC)", variant: "destructive" });
       return;
     }
 
@@ -440,10 +463,14 @@ function CreatePageClient() {
       const ext = file.name.split(".").pop() || "jpg";
       const storagePath = `patterns/custom/${user.id}/${Date.now()}.${ext}`;
       const supabase = createBrowserClient();
+      const contentType = normalizeImageUploadContentType(file);
+      const buf = await file.arrayBuffer();
+      const safeName = file.name.replace(/[^\w.-]+/g, "_") || "upload";
+      const body = new File([buf], safeName, { type: contentType, lastModified: file.lastModified });
 
       const { error: uploadError } = await supabase.storage
         .from("media")
-        .upload(storagePath, file, { upsert: true });
+        .upload(storagePath, body, { upsert: true, contentType });
       if (uploadError) throw new Error(uploadError.message);
 
       setCustomImagePath(storagePath);
@@ -510,6 +537,121 @@ function CreatePageClient() {
       setAiClipDialogOpen(true);
     } finally {
       setAiClipLoading(false);
+    }
+  }
+
+  function handleOwnerSetupVideoPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!isLikelyVideoFile(file)) {
+      toast({
+        title: "Invalid file",
+        description: "Please select MP4, WebM, or MOV.",
+        variant: "destructive",
+      });
+      if (ownerSetupVideoRef.current) ownerSetupVideoRef.current.value = "";
+      return;
+    }
+    setOwnerSetupVideoFile(file);
+  }
+
+  async function handleOwnerSetupProcessReview() {
+    if (!selectedCharacterId) {
+      toast({ title: "Select a character", variant: "destructive" });
+      return;
+    }
+    if (!ownerSetupVideoFile) {
+      toast({
+        title: "Choose a video",
+        description: "Upload a clip between 3–20 seconds (MP4, WebM, or MOV). Scene, bets, and location are inferred automatically.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    pendingDraftSeqRef.current += 1;
+    setReviewMode(false);
+    setReviewVideoPath(null);
+    setReviewFalVideoUrl(null);
+    setReviewJobId(null);
+    setReviewImagePath(null);
+    setReviewSummary(null);
+    setReviewLlmGen(null);
+    setReviewCharacterId(null);
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(CREATE_REVIEW_CACHE_KEY);
+    }
+
+    setOwnerSetupBusy(true);
+    setErrorMsg(null);
+    try {
+      const {
+        data: { user },
+      } = await getUserQueued();
+      if (!user) throw new Error("Not signed in");
+
+      const rawExt = ownerSetupVideoFile.name.split(".").pop()?.toLowerCase() || "mp4";
+      const extSafe = rawExt === "webm" ? "webm" : rawExt === "mov" ? "mov" : "mp4";
+      const storagePath = `clips/owner_queue/${user.id}/${Date.now()}.${extSafe}`;
+      const supabase = createBrowserClient();
+      const contentType = normalizeVideoUploadContentType(ownerSetupVideoFile);
+      const buf = await ownerSetupVideoFile.arrayBuffer();
+      const safeName = ownerSetupVideoFile.name.replace(/[^\w.-]+/g, "_") || "upload.mp4";
+      const body = new File([buf], safeName, {
+        type: contentType,
+        lastModified: ownerSetupVideoFile.lastModified,
+      });
+      const { error: uploadError } = await supabase.storage
+        .from("media")
+        .upload(storagePath, body, { upsert: true, contentType });
+      if (uploadError) throw new Error(uploadError.message);
+
+      const res = await processCharacterOwnerSetupUpload({
+        characterId: selectedCharacterId,
+        uploadStoragePath: storagePath,
+      });
+      if (res.error) throw new Error(res.error);
+      const d = res.data;
+      if (!d?.jobId || !d.videoStoragePath) {
+        throw new Error("Server did not return a review job");
+      }
+
+      setReviewMode(true);
+      setReviewVideoPath(d.videoStoragePath);
+      setReviewFalVideoUrl(null);
+      setReviewJobId(d.jobId);
+      setReviewImagePath(d.imageStoragePath);
+      setReviewSummary(d.sceneSummary);
+      setReviewLlmGen(d.llmGeneration);
+      setReviewCharacterId(d.characterId);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(
+          CREATE_REVIEW_CACHE_KEY,
+          JSON.stringify({
+            reviewVideoPath: d.videoStoragePath,
+            reviewFalVideoUrl: null,
+            reviewJobId: d.jobId,
+            reviewImagePath: d.imageStoragePath,
+            reviewSummary: d.sceneSummary,
+            reviewLlmGen: d.llmGeneration,
+            reviewCharacterId: d.characterId,
+          }),
+        );
+      }
+      toast({
+        title: "Setup clip ready",
+        description:
+          "We inferred scene, bet options, and location from your file and frames. Review below, then post — full video analysis still runs after publish like other clips.",
+      });
+    } catch (err: any) {
+      toast({
+        title: "Setup upload failed",
+        description: err?.message || "Unknown error",
+        variant: "destructive",
+      });
+      setErrorMsg(err?.message || "Unknown error");
+    } finally {
+      setOwnerSetupBusy(false);
     }
   }
 
@@ -675,6 +817,7 @@ function CreatePageClient() {
           sceneSummary: reviewSummary || "",
           llmGeneration: reviewLlmGen,
           characterId: reviewCharacterId,
+          ...(reviewLlmGen?.owner_character_setup_upload ? { clipSourceType: "upload" as const } : {}),
         });
       } else {
         res = await publishDraft({
@@ -734,8 +877,8 @@ function CreatePageClient() {
 
   async function handleNewCharFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file || !file.type.startsWith("image/")) {
-      toast({ title: "Invalid file", description: "Please select an image", variant: "destructive" });
+    if (!file || !isLikelyImageFile(file)) {
+      toast({ title: "Invalid file", description: "Please select an image (JPG, PNG, WebP, HEIC)", variant: "destructive" });
       return;
     }
     setNewCharFile(file);
@@ -747,9 +890,13 @@ function CreatePageClient() {
       const ext = file.name.split(".").pop() || "jpg";
       const storagePath = `characters/custom/${user.id}/${Date.now()}.${ext}`;
       const supabase = createBrowserClient();
+      const contentType = normalizeImageUploadContentType(file);
+      const buf = await file.arrayBuffer();
+      const safeName = file.name.replace(/[^\w.-]+/g, "_") || "upload";
+      const body = new File([buf], safeName, { type: contentType, lastModified: file.lastModified });
       const { error: uploadErr } = await supabase.storage
         .from("media")
-        .upload(storagePath, file, { upsert: true });
+        .upload(storagePath, body, { upsert: true, contentType });
       if (uploadErr) throw new Error(uploadErr.message);
       setNewCharImagePath(storagePath);
       setNewCharUploading(false);
@@ -957,44 +1104,53 @@ function CreatePageClient() {
                   )}
                 </Button>
 
-                <div className="relative">
-                  <div className="absolute inset-0 flex items-center">
-                    <span className="w-full border-t border-border" />
-                  </div>
-                  <div className="relative flex justify-center text-xs">
-                    <span className="bg-card px-2 text-muted-foreground">or improve</span>
-                  </div>
-                </div>
+                {!reviewLlmGen?.owner_character_setup_upload ? (
+                  <>
+                    <div className="relative">
+                      <div className="absolute inset-0 flex items-center">
+                        <span className="w-full border-t border-border" />
+                      </div>
+                      <div className="relative flex justify-center text-xs">
+                        <span className="bg-card px-2 text-muted-foreground">or improve</span>
+                      </div>
+                    </div>
 
-                <div className="space-y-2">
-                  <Input
-                    placeholder="Describe what should be changed..."
-                    value={improveFeedback}
-                    onChange={(e) => setImproveFeedback(e.target.value)}
-                    maxLength={300}
-                    disabled={improving}
-                  />
-                  <Button
-                    className="w-full"
-                    variant="outline"
-                    size="lg"
-                    onClick={handleImprove}
-                    disabled={
-                      improving || publishing || !improveFeedback.trim() || !reviewVideoPath
-                    }
-                  >
-                    {improving ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Improving...
-                      </>
-                    ) : (
-                      "Improve Video"
-                    )}
-                  </Button>
-                </div>
+                    <div className="space-y-2">
+                      <Input
+                        placeholder="Describe what should be changed..."
+                        value={improveFeedback}
+                        onChange={(e) => setImproveFeedback(e.target.value)}
+                        maxLength={300}
+                        disabled={improving}
+                      />
+                      <Button
+                        className="w-full"
+                        variant="outline"
+                        size="lg"
+                        onClick={handleImprove}
+                        disabled={
+                          improving || publishing || !improveFeedback.trim() || !reviewVideoPath
+                        }
+                      >
+                        {improving ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Improving...
+                          </>
+                        ) : (
+                          "Improve Video"
+                        )}
+                      </Button>
+                    </div>
 
-                {improving && <CinemaLoader label="Improving your clip" />}
+                    {improving && <CinemaLoader label="Improving your clip" />}
+                  </>
+                ) : (
+                  <p className="text-center text-[11px] text-muted-foreground">
+                    AI “improve” is not available for owner-uploaded setup clips — re-upload from Create if you need a
+                    different take.
+                  </p>
+                )}
 
                 {!!errorMsg && (
                   <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
@@ -1195,6 +1351,77 @@ function CreatePageClient() {
                         <span>View {selectedCharacter.name} profile</span>
                         <ChevronRight className="h-4 w-4" />
                       </button>
+
+                      {isCharacterOwner ? (
+                        <div className="space-y-3 rounded-xl border border-primary/25 bg-primary/5 p-4">
+                          <div className="flex items-start gap-2">
+                            <Upload className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                            <div className="space-y-1">
+                              <p className="text-sm font-medium text-foreground">Upload your setup clip</p>
+                              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                                Post a real setup video instead of generating from the reference image. We infer the scene,
+                                bet options, and a location line from the clip (frames + any GPS/metadata in the file),
+                                trim to 20s max, check quality, and cut before an early on-screen resolution when
+                                possible. After you post, the same deep video analysis pipeline runs as for AI clips.
+                              </p>
+                            </div>
+                          </div>
+
+                          <input
+                            ref={ownerSetupVideoRef}
+                            type="file"
+                            accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
+                            className="hidden"
+                            onChange={handleOwnerSetupVideoPick}
+                          />
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={ownerSetupBusy}
+                              onClick={() => ownerSetupVideoRef.current?.click()}
+                            >
+                              Choose video
+                            </Button>
+                            {ownerSetupVideoFile ? (
+                              <span className="text-xs text-muted-foreground truncate max-w-[200px]">
+                                {ownerSetupVideoFile.name}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">No file selected</span>
+                            )}
+                          </div>
+
+                          {ownerSetupBusy ? (
+                            <div className="flex items-center gap-2 rounded-lg border border-border bg-card/80 px-3 py-2 text-xs text-muted-foreground">
+                              <Loader2 className="h-4 w-4 animate-spin shrink-0 text-primary" />
+                              Sampling frames, inferring scene & bets, checking resolution trim…
+                            </div>
+                          ) : null}
+
+                          <Button
+                            type="button"
+                            className="w-full"
+                            size="lg"
+                            variant="secondary"
+                            disabled={ownerSetupBusy}
+                            onClick={() => void handleOwnerSetupProcessReview()}
+                          >
+                            {ownerSetupBusy ? (
+                              <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Processing…
+                              </>
+                            ) : (
+                              <>
+                                <Film className="h-4 w-4" />
+                                Use uploaded clip for review
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      ) : null}
                     </div>
                   ) : charactersLoading ? (
                     <CinemaLoader label="Loading characters" />

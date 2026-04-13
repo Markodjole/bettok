@@ -1,4 +1,5 @@
 export { analyzeClipVideo, getContinuationContext, getAnalysisStatus } from "./pipeline";
+export { transcribeClipAudioFromVideoBytes } from "./audio-transcribe";
 export type {
   VideoAnalysis,
   ContinuationContext,

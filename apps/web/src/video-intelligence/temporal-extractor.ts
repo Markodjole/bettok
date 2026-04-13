@@ -13,7 +13,11 @@ import type {
   StoryBeat,
   AvailableOption,
 } from "./types";
-import { TEMPORAL_EXTRACTION_SYSTEM, buildTemporalUserMessage } from "./prompts";
+import {
+  TEMPORAL_EXTRACTION_SYSTEM,
+  buildTemporalUserMessage,
+  type TemporalAudioContext,
+} from "./prompts";
 import { log } from "./utils";
 
 const TEMPORAL_MODEL = process.env.LLM_MODEL_TEMPORAL || process.env.LLM_MODEL_ANALYSIS || process.env.LLM_MODEL || "gpt-4o-mini";
@@ -30,6 +34,7 @@ interface TemporalResult {
 
 export async function extractTemporalFeatures(
   observed: ObservedFacts,
+  audio?: TemporalAudioContext | null,
 ): Promise<TemporalResult> {
   const apiKey = process.env.LLM_API_KEY;
   if (!apiKey || process.env.LLM_PROVIDER !== "openai") {
@@ -40,7 +45,11 @@ export async function extractTemporalFeatures(
   const client = new OpenAI({ apiKey });
 
   const observedJson = JSON.stringify(observed, null, 1);
-  log("temporal", "extracting", { observedLength: observedJson.length, model: TEMPORAL_MODEL });
+  log("temporal", "extracting", {
+    observedLength: observedJson.length,
+    model: TEMPORAL_MODEL,
+    hasAudioAsr: !!audio?.transcript?.trim(),
+  });
 
   const res = await client.chat.completions.create({
     model: TEMPORAL_MODEL,
@@ -49,7 +58,7 @@ export async function extractTemporalFeatures(
     temperature: 0.15,
     messages: [
       { role: "system", content: TEMPORAL_EXTRACTION_SYSTEM },
-      { role: "user", content: buildTemporalUserMessage(observedJson) },
+      { role: "user", content: buildTemporalUserMessage(observedJson, audio) },
     ],
   });
 

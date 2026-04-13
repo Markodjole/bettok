@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { LogOut, Pencil, Trophy, Target, TrendingUp } from "lucide-react";
+import { LogOut, Pencil, Sparkles, Trophy, Target, TrendingUp } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -112,6 +112,19 @@ export default function ProfilePage() {
               <Link href="/profile/edit">
                 <Pencil className="h-4 w-4" />
                 Edit Profile
+              </Link>
+            </Button>
+
+            <Button asChild variant="outline" className="w-full justify-start gap-2">
+              <Link
+                href={
+                  profile?.character_onboarding_completed_at
+                    ? "/onboarding/character?update=1"
+                    : "/onboarding/character"
+                }
+              >
+                <Sparkles className="h-4 w-4" />
+                My BetTok character
               </Link>
             </Button>
 

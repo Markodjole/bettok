@@ -20,6 +20,16 @@ import {
   trimVideoAt,
   analyzeVideoForResolution,
 } from "./image-pattern-clips";
+import {
+  transcribeClipAudioFromVideoBytes,
+  type ClipAudioTranscription,
+} from "@/video-intelligence/audio-transcribe";
+import {
+  extractContainerLocationHintFromBytes,
+  probeVideoFromBytes,
+  sampleFrames,
+} from "@/video-intelligence/frame-sampler";
+import type { SampledFrame } from "@/video-intelligence/types";
 import type { BaseScene, MultiScene, EnhancedPlot, PredictionStarter } from "./image-pattern-clips";
 
 function parsePredictionStarters(raw: unknown): PredictionStarter[] {
@@ -1209,6 +1219,454 @@ export async function generateFromCharacter(input: {
   }
 }
 
+const OWNER_SETUP_MIN_MS = 3000;
+const OWNER_SETUP_MAX_MS = 20_000;
+const OWNER_SETUP_MIN_SHORTER_SIDE = 480;
+const OWNER_SETUP_MIN_BITRATE = 350_000;
+
+function mergeCaptureLocationText(containerHint: string | null, visionDescription: string): string | null {
+  const c = (containerHint || "").trim();
+  const v = (visionDescription || "").trim();
+  if (c && v) return `${c} · ${v}`.slice(0, 320);
+  if (c) return c.slice(0, 320);
+  if (v) return v.slice(0, 320);
+  return null;
+}
+
+function buildLlmGenerationForOwnerUpload(params: {
+  characterId: string;
+  imageStoragePath: string;
+  sceneSummary: string;
+  outcomes: string[];
+  predictionStarters: PredictionStarter[];
+  durationSeconds: number;
+  captureLocationText: string | null;
+  /** Whisper ASR when available — same path as publish transcript */
+  spokenDialogue: string;
+}): Record<string, unknown> {
+  const starters =
+    params.predictionStarters.length > 0
+      ? params.predictionStarters.map((s) => ({
+          label: s.label.slice(0, 300),
+          opening_yes_hint: Math.min(0.82, Math.max(0.18, s.opening_yes_hint)),
+        }))
+      : params.outcomes.map((label, i) => ({
+          label: label.slice(0, 300),
+          opening_yes_hint: Math.min(0.82, Math.max(0.18, 0.45 + (i % 3) * 0.06)),
+        }));
+  const out: Record<string, unknown> = {
+    _publish_clip_source_type: "upload",
+    owner_character_setup_upload: true,
+    character_id: params.characterId,
+    image_storage_path: params.imageStoragePath,
+    scene_summary: params.sceneSummary,
+    outcomes: params.outcomes,
+    prediction_starters: starters,
+    scenes: [],
+    negative_prompt: mergeNegativePromptLayers(
+      "outcome revealed, result shown, action completed, decision finished, resolution, text overlay",
+    ),
+    spoken_dialogue: params.spokenDialogue.trim().slice(0, 500),
+    total_duration_seconds: params.durationSeconds,
+  };
+  if (params.captureLocationText) out.capture_location_text = params.captureLocationText;
+  return out;
+}
+
+/**
+ * Vision + LLM: infer scene, bet outcomes, starters, and on-screen place description from sampled frames.
+ * Uses file metadata hint when present (GPS / QuickTime) — combined for feed display after publish.
+ */
+async function inferOwnerSetupFromSampledFrames(
+  frames: SampledFrame[],
+  character: CharacterWithImages,
+  containerLocationHint: string | null,
+  audioTranscript: string | null,
+): Promise<{
+  scene_summary: string;
+  outcomes: string[];
+  prediction_starters: PredictionStarter[];
+  capture_location_description: string;
+}> {
+  const apiKey = process.env.LLM_API_KEY;
+  if (!apiKey || process.env.LLM_PROVIDER !== "openai") {
+    throw new Error(
+      "Video analysis requires OpenAI (LLM_PROVIDER=openai and LLM_API_KEY) to infer scene and bet options from your clip.",
+    );
+  }
+  if (!frames.length) {
+    throw new Error("Could not sample frames from the video. Re-export as H.264 MP4 and try again.");
+  }
+
+  const picked =
+    frames.length <= 4
+      ? frames
+      : [
+          frames[0],
+          frames[Math.floor(frames.length * 0.33)],
+          frames[Math.floor(frames.length * 0.66)],
+          frames[frames.length - 1],
+        ];
+
+  const metaLines = [
+    containerLocationHint ? `File / device metadata (if any): ${containerLocationHint}` : null,
+    `Character: ${character.name}`,
+    character.tagline ? `Tagline: ${character.tagline}` : null,
+  ].filter(Boolean);
+
+  const asr = audioTranscript?.trim();
+  const audioBlock = asr
+    ? `Automatic speech transcription (Whisper):\n"""${asr}"""\n\nUse speech together with the frames: dialogue can change what viewers should bet on next.\n\n`
+    : "No usable speech was transcribed (silent clip, music-only, or unclear audio).\n\n";
+
+  const { default: OpenAI } = await import("openai");
+  const client = new OpenAI({ apiKey });
+  const model =
+    process.env.LLM_MODEL_OWNER_UPLOAD_INFER ||
+    process.env.LLM_MODEL_IMAGE_PATTERNS ||
+    process.env.LLM_MODEL ||
+    "gpt-4o-mini";
+
+  type VisionPart = {
+    type: "image_url";
+    image_url: { url: string; detail: "low" };
+  };
+
+  const userContent: Array<{ type: "text"; text: string } | VisionPart> = [
+    {
+      type: "text",
+      text: `These JPEG key frames are in time order from a short vertical setup clip.
+
+${metaLines.join("\n")}
+
+${audioBlock}Infer only what is supported by the frames and transcript (no invented plot). Return JSON with:
+- scene_summary: 60-400 chars, factual, suitable as the clip description.
+- outcomes: 2-4 short DISTINCT strings — what viewers could bet on for what happens NEXT (still open at the end of the clip).
+- prediction_starters: same count as outcomes; each { "label": string (same as matching outcome), "opening_yes_hint": number 0.22-0.78 }.
+- capture_location_description: where this appears filmed using ONLY visible clues. If unclear, use "Indoor or undisclosed location".
+
+Return a single JSON object only, no markdown.`,
+    },
+    ...picked.slice(0, 5).map(
+      (f): VisionPart => ({
+        type: "image_url",
+        image_url: {
+          url: `data:image/jpeg;base64,${f.base64}`,
+          detail: "low",
+        },
+      }),
+    ),
+  ];
+
+  const response = await client.chat.completions.create({
+    model,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content:
+          "You extract structured metadata for a short-form prediction-video app. Follow the user's JSON schema exactly.",
+      },
+      { role: "user", content: userContent },
+    ],
+    max_tokens: 1200,
+    temperature: 0.35,
+  });
+
+  const raw = response.choices[0]?.message?.content;
+  if (!raw) throw new Error("Model returned no content for clip analysis");
+
+  const parsed = JSON.parse(raw) as {
+    scene_summary?: string;
+    outcomes?: unknown;
+    prediction_starters?: unknown;
+    capture_location_description?: string;
+  };
+
+  const scene_summary = String(parsed.scene_summary || "").trim();
+  if (scene_summary.length < 20) {
+    throw new Error("Could not infer a clear scene from the video. Try a clearer take or simpler framing.");
+  }
+
+  const rawOutcomes = Array.isArray(parsed.outcomes)
+    ? parsed.outcomes.map((x) => String(x || "").trim()).filter(Boolean)
+    : [];
+  const uniq = Array.from(new Set(rawOutcomes.map((o) => o.toLowerCase()))).map(
+    (low) => rawOutcomes.find((o) => o.toLowerCase() === low) || "",
+  );
+  const outcomes = uniq.filter(Boolean).slice(0, 4);
+  if (outcomes.length < 2 || outcomes.length > 4) {
+    throw new Error("Could not infer 2–4 distinct bet options from the clip. Try again or use a clearer fork in the action.");
+  }
+  for (const o of outcomes) {
+    if (o.length < 3 || o.length > 200) {
+      throw new Error("Inferred outcomes must be between 3 and 200 characters each.");
+    }
+  }
+
+  let prediction_starters: PredictionStarter[] = [];
+  if (Array.isArray(parsed.prediction_starters)) {
+    for (const item of parsed.prediction_starters) {
+      if (!item || typeof item !== "object") continue;
+      const rec = item as Record<string, unknown>;
+      const label = String(rec.label || "").trim();
+      if (!label) continue;
+      let h = Number(rec.opening_yes_hint);
+      if (!Number.isFinite(h)) h = 0.5;
+      h = Math.max(0.22, Math.min(0.78, h));
+      prediction_starters.push({ label: label.slice(0, 300), opening_yes_hint: h });
+    }
+  }
+  if (prediction_starters.length !== outcomes.length) {
+    prediction_starters = outcomes.map((label, i) => ({
+      label: label.slice(0, 300),
+      opening_yes_hint: Math.min(0.78, Math.max(0.22, 0.45 + (i % 3) * 0.08)),
+    }));
+  }
+
+  const capture_location_description = String(parsed.capture_location_description || "").trim();
+
+  return {
+    scene_summary: scene_summary.slice(0, 500),
+    outcomes,
+    prediction_starters,
+    capture_location_description,
+  };
+}
+
+/**
+ * Character owner uploads a real "setup" clip (no AI generation).
+ * Validates duration (3–20s), basic quality, infers scene/outcomes/location from the file + frames,
+ * trims if an outcome resolution is detected early, then stages the same review → publish flow as AI clips.
+ */
+export async function processCharacterOwnerSetupUpload(input: {
+  characterId: string;
+  /** Client-uploaded path in `media` bucket (e.g. clips/owner_queue/<user>/<id>.mp4) */
+  uploadStoragePath: string;
+}): Promise<{
+  error?: string;
+  data?: {
+    jobId: string;
+    videoStoragePath: string;
+    imageStoragePath: string;
+    sceneSummary: string;
+    llmGeneration: Record<string, unknown>;
+    characterId: string;
+  };
+}> {
+  try {
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { error: "Not signed in" };
+
+    const serviceClient = await createServiceClient();
+    const { character, error: charErr } = await getCharacterById(input.characterId);
+    if (charErr || !character) return { error: charErr || "Character not found" };
+    if (character.creator_user_id !== user.id) {
+      return { error: "Only the character owner can upload a setup clip for this character." };
+    }
+
+    const primary =
+      character.reference_images.find((img) => img.is_primary) ?? character.reference_images[0];
+    if (!primary?.image_storage_path) {
+      return { error: "Character has no reference image for poster metadata." };
+    }
+
+    const path = input.uploadStoragePath.trim();
+    if (!path.startsWith(`clips/owner_queue/${user.id}/`)) {
+      return { error: "Invalid upload path — use the client upload queue path for your account." };
+    }
+
+    const { data: blob, error: dlErr } = await serviceClient.storage.from("media").download(path);
+    if (dlErr || !blob) return { error: dlErr?.message || "Could not read uploaded video" };
+    let videoBytes = new Uint8Array(await blob.arrayBuffer());
+    if (videoBytes.byteLength < 10_000) {
+      return { error: "Video file is too small to be valid." };
+    }
+
+    const ext = path.split(".").pop()?.toLowerCase() || "mp4";
+    let meta = await probeVideoFromBytes(videoBytes, ext === "mov" ? "mov" : ext === "webm" ? "webm" : "mp4");
+    if (meta.durationMs < OWNER_SETUP_MIN_MS) {
+      return {
+        error: `Clip must be at least ${OWNER_SETUP_MIN_MS / 1000}s (got ${(meta.durationMs / 1000).toFixed(1)}s).`,
+      };
+    }
+    if (meta.durationMs > OWNER_SETUP_MAX_MS) {
+      const trimmed = await trimVideoAt(videoBytes, OWNER_SETUP_MAX_MS / 1000);
+      videoBytes = new Uint8Array(trimmed);
+      meta = await probeVideoFromBytes(videoBytes, "mp4");
+    }
+
+    const shorter = Math.min(meta.width, meta.height);
+    if (shorter < OWNER_SETUP_MIN_SHORTER_SIDE) {
+      return {
+        error: `Video resolution is too low (${meta.width}×${meta.height}). Use at least ~${OWNER_SETUP_MIN_SHORTER_SIDE}px on the shorter side.`,
+      };
+    }
+    if (meta.bitRate > 0 && meta.bitRate < OWNER_SETUP_MIN_BITRATE) {
+      return {
+        error: `Video bitrate looks too low for a clear feed clip (min ~${Math.round(OWNER_SETUP_MIN_BITRATE / 1000)} kb/s). Re-export at higher quality.`,
+      };
+    }
+
+    const containerLocationHint = await extractContainerLocationHintFromBytes(
+      videoBytes,
+      ext === "mov" ? "mov" : ext === "webm" ? "webm" : "mp4",
+    );
+
+    let sampled: SampledFrame[];
+    let audioForInfer: ClipAudioTranscription;
+    try {
+      [sampled, audioForInfer] = await Promise.all([
+        sampleFrames(videoBytes),
+        transcribeClipAudioFromVideoBytes(videoBytes),
+      ]);
+    } catch (e: any) {
+      logLine("owner-upload", "sample_or_audio.failed", { message: e?.message });
+      return {
+        error:
+          "Could not read video frames for analysis. Export as H.264 MP4 (recommended) or MOV and try again.",
+      };
+    }
+
+    let sceneSummary: string;
+    let outcomes: string[];
+    let predictionStarters: PredictionStarter[];
+    let captureLocationText: string | null;
+    try {
+      const inferred = await inferOwnerSetupFromSampledFrames(
+        sampled,
+        character,
+        containerLocationHint,
+        audioForInfer.transcript,
+      );
+      sceneSummary = inferred.scene_summary;
+      outcomes = inferred.outcomes;
+      predictionStarters = inferred.prediction_starters;
+      captureLocationText = mergeCaptureLocationText(
+        containerLocationHint,
+        inferred.capture_location_description,
+      );
+    } catch (e: any) {
+      const message = e?.message || "Could not analyze clip";
+      logLine("owner-upload", "infer.failed", { message });
+      return { error: message };
+    }
+
+    let didVideoTrimAfterInfer = false;
+    const { data: pub } = serviceClient.storage.from("media").getPublicUrl(path);
+    const publicUrl = pub?.publicUrl;
+    if (publicUrl) {
+      try {
+        logLine("owner-upload", "resolution_check.start", { characterId: character.id });
+        const analysis = await analyzeVideoForResolution(publicUrl, sceneSummary, outcomes);
+        logLine("owner-upload", "resolution_check.done", {
+          resolved: analysis.resolved,
+          cutAt: analysis.cutAtSecond,
+        });
+        if (analysis.resolved && analysis.cutAtSecond != null && analysis.cutAtSecond >= 1.5) {
+          const trimmed = await trimVideoAt(videoBytes, analysis.cutAtSecond);
+          videoBytes = new Uint8Array(trimmed);
+          meta = await probeVideoFromBytes(videoBytes, "mp4");
+          didVideoTrimAfterInfer = true;
+        }
+      } catch (e: any) {
+        logLine("owner-upload", "resolution_check.failed", { message: e?.message });
+      }
+    }
+
+    if (meta.durationMs < OWNER_SETUP_MIN_MS) {
+      return {
+        error: "After trimming any visible resolution, the clip is shorter than 3s. Re-shoot or upload a longer setup.",
+      };
+    }
+    if (meta.durationMs > OWNER_SETUP_MAX_MS) {
+      const trimmed = await trimVideoAt(videoBytes, OWNER_SETUP_MAX_MS / 1000);
+      videoBytes = new Uint8Array(trimmed);
+      meta = await probeVideoFromBytes(videoBytes, "mp4");
+      didVideoTrimAfterInfer = true;
+    }
+
+    let audioForPublish = audioForInfer;
+    if (didVideoTrimAfterInfer) {
+      const again = await transcribeClipAudioFromVideoBytes(videoBytes);
+      if (again.transcript?.trim()) audioForPublish = again;
+    }
+    const spokenDialogue = (audioForPublish.transcript || "").trim().slice(0, 500);
+
+    const { data: job, error: jobErr } = await serviceClient
+      .from("clip_generation_jobs")
+      .insert({
+        user_id: user.id,
+        status: "review",
+        provider: "upload",
+        video_model_key: "character_owner_setup",
+        generation_mode: "character_owner_upload",
+        llm_generation_json: buildLlmGenerationForOwnerUpload({
+          characterId: character.id,
+          imageStoragePath: primary.image_storage_path,
+          sceneSummary,
+          outcomes,
+          predictionStarters,
+          durationSeconds: Math.max(3, Math.round(meta.durationMs / 1000)),
+          captureLocationText,
+          spokenDialogue,
+        }),
+      })
+      .select("id")
+      .single();
+    if (jobErr || !job) return { error: jobErr?.message || "Failed to create review job" };
+
+    const jobId = String((job as { id: string }).id);
+    const finalVideoPath = `clips/${user.id}/${jobId}.mp4`;
+    await uploadBytesToMedia(finalVideoPath, videoBytes, "video/mp4");
+
+    await serviceClient
+      .from("clip_generation_jobs")
+      .update({
+        video_storage_path: finalVideoPath,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", jobId);
+
+    await serviceClient.storage.from("media").remove([path]).catch(() => {});
+
+    logLine(jobId, "owner_upload.ready_for_review", {
+      characterId: character.id,
+      durationMs: meta.durationMs,
+      videoPath: finalVideoPath,
+    });
+
+    const llmGeneration = buildLlmGenerationForOwnerUpload({
+      characterId: character.id,
+      imageStoragePath: primary.image_storage_path,
+      sceneSummary,
+      outcomes,
+      predictionStarters,
+      durationSeconds: Math.max(3, Math.round(meta.durationMs / 1000)),
+      captureLocationText,
+      spokenDialogue,
+    });
+
+    return {
+      data: {
+        jobId,
+        videoStoragePath: finalVideoPath,
+        imageStoragePath: primary.image_storage_path,
+        sceneSummary,
+        llmGeneration,
+        characterId: character.id,
+      },
+    };
+  } catch (e: any) {
+    const message = e?.message || "Owner upload processing failed";
+    console.error("[processCharacterOwnerSetupUpload]", e);
+    return { error: message };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Publish a reviewed character draft → go live
 // ---------------------------------------------------------------------------
@@ -1223,6 +1681,8 @@ export async function publishCharacterDraft(input: {
   sceneSummary: string;
   llmGeneration: any;
   characterId: string;
+  /** Published clip source; owner-uploaded setup uses `upload`. */
+  clipSourceType?: "image_to_video" | "upload";
 }) {
   try {
     const supabase = await createServerClient();
@@ -1287,7 +1747,15 @@ export async function publishCharacterDraft(input: {
       .single();
     if (storyErr || !story) return { error: "Failed to create story" };
 
-    const llm = (input.llmGeneration || {}) as { spoken_dialogue?: string };
+    const llmRaw = (input.llmGeneration || {}) as Record<string, unknown>;
+    const clipSourceType: "image_to_video" | "upload" =
+      input.clipSourceType ||
+      (llmRaw._publish_clip_source_type === "upload" ? "upload" : "image_to_video");
+    const llmStored = { ...llmRaw };
+    delete llmStored._publish_clip_source_type;
+    delete llmStored.owner_character_setup_upload;
+
+    const llm = llmStored as { spoken_dialogue?: string };
     const transcript =
       typeof llm.spoken_dialogue === "string" && llm.spoken_dialogue.trim()
         ? llm.spoken_dialogue.trim().slice(0, 500)
@@ -1299,12 +1767,12 @@ export async function publishCharacterDraft(input: {
         story_id: (story as any).id,
         creator_user_id: user.id,
         character_id: input.characterId,
-        source_type: "image_to_video",
+        source_type: clipSourceType,
         status: "betting_open",
         video_storage_path: finalVideoPath,
         poster_storage_path: input.imageStoragePath,
         first_frame_storage_path: input.imageStoragePath,
-        llm_generation_json: input.llmGeneration,
+        llm_generation_json: llmStored,
         scene_summary: input.sceneSummary,
         transcript,
         published_at: now,
@@ -1346,8 +1814,8 @@ export async function publishCharacterDraft(input: {
       .then((m) => m.analyzeClipVideo(String((clipNode as any).id)))
       .catch(() => {});
 
-    const starters = Array.isArray((input.llmGeneration as Record<string, unknown> | null)?.prediction_starters)
-      ? ((input.llmGeneration as Record<string, unknown>).prediction_starters as Array<{
+    const starters = Array.isArray(llmStored.prediction_starters)
+      ? (llmStored.prediction_starters as Array<{
           label?: unknown;
           opening_yes_hint?: unknown;
         }>)

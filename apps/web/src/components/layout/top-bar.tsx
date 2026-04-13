@@ -2,10 +2,11 @@
 
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useUserStore } from "@/stores/user-store";
 import { useFeedStore } from "@/stores/feed-store";
 import { formatCurrency } from "@/lib/utils";
-import { Wallet, ChevronDown, Eye, EyeOff } from "lucide-react";
+import { Wallet, ChevronDown, Eye, EyeOff, Menu, Sparkles } from "lucide-react";
 
 const STAKE_OPTIONS = [1, 2, 5, 10, 20, 50] as const;
 const STAKE_STORAGE_KEY = "bettok_last_stake_amount";
@@ -20,31 +21,43 @@ function getStoredStakeAmount(): (typeof STAKE_OPTIONS)[number] {
   }
 }
 
+function useClickOutside(ref: React.RefObject<HTMLElement | null>, open: boolean, onClose: () => void) {
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        onClose();
+      }
+    }
+    if (open) {
+      document.addEventListener("click", handleClickOutside);
+      return () => document.removeEventListener("click", handleClickOutside);
+    }
+  }, [open, onClose, ref]);
+}
+
 export function TopBar() {
+  const pathname = usePathname();
   const wallet = useUserStore((s) => s.wallet);
   const lastStakeAmount = useFeedStore((s) => s.lastStakeAmount);
   const setLastStakeAmount = useFeedStore((s) => s.setLastStakeAmount);
   const showFeedBets = useFeedStore((s) => s.showFeedBets);
   const toggleFeedBets = useFeedStore((s) => s.toggleFeedBets);
   const [showAmountPicker, setShowAmountPicker] = useState(false);
+  const [showFeedMenu, setShowFeedMenu] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const isFeed = pathname === "/feed" || pathname.startsWith("/feed/");
+  const showBalanceInHeader =
+    pathname === "/bets" || pathname.startsWith("/bets/") || pathname === "/profile" || pathname.startsWith("/profile/");
 
   useEffect(() => {
     const stored = getStoredStakeAmount();
     setLastStakeAmount(stored);
   }, [setLastStakeAmount]);
 
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
-        setShowAmountPicker(false);
-      }
-    }
-    if (showAmountPicker) {
-      document.addEventListener("click", handleClickOutside);
-      return () => document.removeEventListener("click", handleClickOutside);
-    }
-  }, [showAmountPicker]);
+  useClickOutside(pickerRef, showAmountPicker, () => setShowAmountPicker(false));
+  useClickOutside(menuRef, showFeedMenu, () => setShowFeedMenu(false));
 
   return (
     <header className="fixed left-0 right-0 top-0 z-50 flex h-12 items-center justify-between bg-background/80 px-4 backdrop-blur-lg">
@@ -63,7 +76,7 @@ export function TopBar() {
             <ChevronDown className="h-3.5 w-3.5 opacity-70" />
           </button>
           {showAmountPicker && (
-            <div className="absolute right-0 top-full mt-1 flex flex-wrap gap-1 rounded-lg border border-border bg-popover p-2 shadow-lg min-w-[120px]">
+            <div className="absolute right-0 top-full mt-1 flex min-w-[120px] flex-wrap gap-1 rounded-lg border border-border bg-popover p-2 shadow-lg">
               {STAKE_OPTIONS.map((amount) => (
                 <button
                   key={amount}
@@ -97,13 +110,40 @@ export function TopBar() {
             <EyeOff className="h-3.5 w-3.5 text-white/70" />
           )}
         </button>
-        <Link
-          href="/wallet"
-          className="flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1.5 text-sm font-medium transition-colors hover:bg-secondary/80"
-        >
-          <Wallet className="h-3.5 w-3.5 text-primary" />
-          <span>{wallet ? formatCurrency(wallet.balance) : "..."}</span>
-        </Link>
+        {isFeed && (
+          <div className="relative" ref={menuRef}>
+            <button
+              type="button"
+              onClick={() => setShowFeedMenu((v) => !v)}
+              className="flex items-center justify-center rounded-full bg-secondary p-2 text-sm transition-colors hover:bg-secondary/80"
+              aria-label="Feed settings"
+              title="Settings"
+            >
+              <Menu className="h-4 w-4" />
+            </button>
+            {showFeedMenu && (
+              <div className="absolute right-0 top-full mt-1 min-w-[200px] overflow-hidden rounded-lg border border-border bg-popover py-1 shadow-lg">
+                <Link
+                  href="/onboarding/character"
+                  className="flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted"
+                  onClick={() => setShowFeedMenu(false)}
+                >
+                  <Sparkles className="h-4 w-4 text-primary" />
+                  Become a character
+                </Link>
+              </div>
+            )}
+          </div>
+        )}
+        {showBalanceInHeader && (
+          <Link
+            href="/wallet"
+            className="flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1.5 text-sm font-medium transition-colors hover:bg-secondary/80"
+          >
+            <Wallet className="h-3.5 w-3.5 text-primary" />
+            <span>{wallet ? formatCurrency(wallet.balance) : "..."}</span>
+          </Link>
+        )}
       </div>
     </header>
   );

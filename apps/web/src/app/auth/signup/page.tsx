@@ -53,6 +53,21 @@ export default function SignupPage() {
     router.refresh();
   }
 
+  async function signUpWithGoogle() {
+    setLoading(true);
+    const supabase = createBrowserClient();
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback?next=/feed`,
+      },
+    });
+    if (error) {
+      toast({ title: "Google sign-up failed", description: error.message, variant: "destructive" });
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="flex min-h-[100dvh] flex-col items-center justify-center px-4">
       <div className="mb-8 text-center">
@@ -120,6 +135,23 @@ export default function SignupPage() {
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Creating account..." : "Create account"}
+            </Button>
+            <div className="relative py-2">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-card text-muted-foreground px-2">Or</span>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              disabled={loading}
+              onClick={() => void signUpWithGoogle()}
+            >
+              Continue with Google
             </Button>
           </form>
           <p className="mt-4 text-center text-sm text-muted-foreground">

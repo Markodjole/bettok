@@ -96,6 +96,8 @@ export interface Character {
   preferences: CharacterPreferences;
   backstory: string | null;
   voice: CharacterVoice;
+  /** Optional onboarding / gallery paths (intro video, etc.). */
+  media?: Record<string, unknown>;
   trait_history: CharacterTraitEvent[];
   betting_signals: BettingSignals;
   total_videos: number;

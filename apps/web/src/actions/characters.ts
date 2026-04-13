@@ -515,6 +515,14 @@ Be specific and visual. Describe only what you see.`,
 /**
  * Create a user-owned custom character.
  */
+const DEFAULT_BETTING_SIGNALS: BettingSignals = {
+  quick_read: [],
+  choice_patterns: {},
+  behavior_patterns: {},
+  exploitable_tendencies: [],
+  context_modifiers: {},
+};
+
 export async function createCustomCharacter(input: {
   name: string;
   tagline?: string;
@@ -523,6 +531,10 @@ export async function createCustomCharacter(input: {
   personality?: Record<string, unknown>;
   preferences?: Record<string, unknown>;
   backstory?: string;
+  voice?: Record<string, unknown>;
+  betting_signals?: BettingSignals;
+  media?: Record<string, unknown>;
+  additionalImagePaths?: Array<{ path: string; angle?: string; isPrimary?: boolean }>;
 }): Promise<{ error?: string; character?: CharacterWithImages }> {
   const supabase = await createServerClient();
   const {
@@ -562,7 +574,9 @@ export async function createCustomCharacter(input: {
     general_tendencies: [],
   };
 
-  const voice = { tone: "neutral", vocabulary: "casual", catchphrases: [] };
+  const voice = input.voice ?? { tone: "neutral", vocabulary: "casual", catchphrases: [] };
+  const betting_signals = input.betting_signals ?? DEFAULT_BETTING_SIGNALS;
+  const media = input.media ?? {};
 
   const { data: charRow, error: insertErr } = await serviceClient
     .from("characters")
@@ -576,6 +590,8 @@ export async function createCustomCharacter(input: {
       preferences,
       backstory: input.backstory || null,
       voice,
+      betting_signals,
+      media,
       trait_history: [],
       total_videos: 0,
       total_resolutions: 0,
@@ -592,14 +608,34 @@ export async function createCustomCharacter(input: {
 
   const char = charRow as Character;
 
-  await serviceClient.from("character_reference_images").insert({
-    character_id: char.id,
-    image_storage_path: input.imageStoragePath,
-    angle: "front",
-    is_primary: true,
-    description: "Primary reference image",
-    sort_order: 0,
-  });
+  const extra = input.additionalImagePaths ?? [];
+  const rows: Array<{
+    character_id: string;
+    image_storage_path: string;
+    angle: string;
+    is_primary: boolean;
+    description: string;
+    sort_order: number;
+  }> = [
+    {
+      character_id: char.id,
+      image_storage_path: input.imageStoragePath,
+      angle: "front",
+      is_primary: true,
+      description: "Primary reference image",
+      sort_order: 0,
+    },
+    ...extra.map((e, i) => ({
+      character_id: char.id,
+      image_storage_path: e.path,
+      angle: e.angle ?? `extra_${i + 1}`,
+      is_primary: !!e.isPrimary,
+      description: "Onboarding reference",
+      sort_order: i + 1,
+    })),
+  ];
+
+  await serviceClient.from("character_reference_images").insert(rows);
 
   const { data: images } = await serviceClient
     .from("character_reference_images")
@@ -608,6 +644,78 @@ export async function createCustomCharacter(input: {
     .order("sort_order", { ascending: true });
 
   revalidatePath("/create");
+
+  return {
+    character: {
+      ...char,
+      reference_images: (images ?? []) as CharacterReferenceImage[],
+    },
+  };
+}
+
+/**
+ * Update a character owned by the current user (same row shape as seeded characters).
+ */
+export async function updateUserCharacter(
+  characterId: string,
+  input: {
+    name?: string;
+    tagline?: string | null;
+    appearance?: Record<string, unknown>;
+    personality?: Record<string, unknown>;
+    preferences?: Record<string, unknown>;
+    backstory?: string | null;
+    voice?: Record<string, unknown>;
+    betting_signals?: BettingSignals;
+    media?: Record<string, unknown>;
+  },
+): Promise<{ error?: string; character?: CharacterWithImages }> {
+  const supabase = await createServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in" };
+
+  const serviceClient = await createServiceClient();
+
+  const { data: existing, error: fetchErr } = await serviceClient
+    .from("characters")
+    .select("*")
+    .eq("id", characterId)
+    .maybeSingle();
+
+  if (fetchErr || !existing) return { error: fetchErr?.message ?? "Character not found" };
+  if (existing.creator_user_id !== user.id) return { error: "Not allowed" };
+
+  const patch: Record<string, unknown> = {};
+  if (input.name !== undefined) patch.name = input.name;
+  if (input.tagline !== undefined) patch.tagline = input.tagline;
+  if (input.appearance !== undefined) patch.appearance = input.appearance;
+  if (input.personality !== undefined) patch.personality = input.personality;
+  if (input.preferences !== undefined) patch.preferences = input.preferences;
+  if (input.backstory !== undefined) patch.backstory = input.backstory;
+  if (input.voice !== undefined) patch.voice = input.voice;
+  if (input.betting_signals !== undefined) patch.betting_signals = input.betting_signals;
+  if (input.media !== undefined) patch.media = input.media;
+
+  const { data: updated, error: updErr } = await serviceClient
+    .from("characters")
+    .update(patch)
+    .eq("id", characterId)
+    .select()
+    .single();
+
+  if (updErr || !updated) return { error: updErr?.message ?? "Update failed" };
+
+  const char = updated as Character;
+  const { data: images } = await serviceClient
+    .from("character_reference_images")
+    .select("*")
+    .eq("character_id", char.id)
+    .order("sort_order", { ascending: true });
+
+  revalidatePath("/create");
+  revalidatePath("/feed");
 
   return {
     character: {
