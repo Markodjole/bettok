@@ -1,3 +1,5 @@
 {
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "installCommand": "(cd ../.. && pnpm install)",
+  "buildCommand": "cd ../.. && pnpm exec turbo build --filter=@bettok/web"
 }
