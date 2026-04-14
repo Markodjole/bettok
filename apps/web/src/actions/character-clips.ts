@@ -1310,10 +1310,22 @@ async function inferOwnerSetupFromSampledFrames(
           frames[frames.length - 1],
         ];
 
-  const metaLines = [
-    containerLocationHint ? `File / device metadata (if any): ${containerLocationHint}` : null,
+  const personality = character.personality;
+  const preferences = character.preferences;
+  const bettingSignals = character.betting_signals;
+
+  const characterContext = [
     `Character: ${character.name}`,
     character.tagline ? `Tagline: ${character.tagline}` : null,
+    personality?.temperament ? `Temperament: ${personality.temperament}` : null,
+    personality?.decision_style ? `Decision style: ${personality.decision_style}` : null,
+    personality?.risk_appetite ? `Risk appetite: ${personality.risk_appetite}` : null,
+    preferences?.food?.likes?.length ? `Likes (food): ${preferences.food.likes.slice(0, 5).join(", ")}` : null,
+    preferences?.food?.dislikes?.length ? `Dislikes (food): ${preferences.food.dislikes.slice(0, 5).join(", ")}` : null,
+    preferences?.activities?.likes?.length ? `Likes (activities): ${preferences.activities.likes.slice(0, 5).join(", ")}` : null,
+    bettingSignals?.quick_read?.length ? `Betting edge / quick read:\n${bettingSignals.quick_read.map((l: string) => `  - ${l}`).join("\n")}` : null,
+    bettingSignals?.exploitable_tendencies?.length ? `Exploitable tendencies: ${bettingSignals.exploitable_tendencies.slice(0, 4).join("; ")}` : null,
+    containerLocationHint ? `File / device metadata (if any): ${containerLocationHint}` : null,
   ].filter(Boolean);
 
   const asr = audioTranscript?.trim();
@@ -1337,14 +1349,25 @@ async function inferOwnerSetupFromSampledFrames(
   const userContent: Array<{ type: "text"; text: string } | VisionPart> = [
     {
       type: "text",
-      text: `These JPEG key frames are in time order from a short vertical setup clip.
+      text: `These JPEG key frames are in time order from a short vertical setup clip filmed by the character's owner.
 
-${metaLines.join("\n")}
+${characterContext.join("\n")}
 
-${audioBlock}Infer only what is supported by the frames and transcript (no invented plot). Return JSON with:
-- scene_summary: 60-400 chars, factual, suitable as the clip description.
-- outcomes: 2-4 short DISTINCT strings — what viewers could bet on for what happens NEXT (still open at the end of the clip).
-- prediction_starters: same count as outcomes; each { "label": string (same as matching outcome), "opening_yes_hint": number 0.22-0.78 }.
+${audioBlock}You are writing predictions for a social betting app. Viewers watch the clip and bet on what ${character.name} does NEXT.
+
+RULES FOR GOOD PREDICTIONS:
+- Be SPECIFIC to what is visible in the frames + what was said. Reference actual objects, people, actions, and the spoken dialogue.
+- Always include "${character.name}" in each prediction label.
+- Each prediction must describe a CONCRETE, OBSERVABLE action — not vague states like "continues searching" or "receives information".
+- Use the character's personality and tendencies to make predictions feel personal: e.g. if they're impulsive, one prediction could be a rash action; if cautious, a hesitant one.
+- Frame predictions as "what happens in the next 10 seconds" — immediate, filmable actions.
+- BAD: "${character.name} continues exploring", "${character.name} gets a phone call" (too vague, not grounded in the clip).
+- GOOD: "${character.name} opens the top desk drawer", "${character.name} picks up the blue phone stand and checks behind it" (specific, references visible objects).
+
+Return JSON:
+- scene_summary: 60-400 chars, factual, describes what is happening in the clip. Reference dialogue if present.
+- outcomes: 2-4 short DISTINCT action strings — what ${character.name} concretely does next. Each must be specific, verb-first, and reference visible objects/people/places from the frames.
+- prediction_starters: same count as outcomes; each { "label": full sentence prediction including "${character.name}", "opening_yes_hint": number 0.22-0.78 reflecting probability based on character personality }.
 - capture_location_description: where this appears filmed using ONLY visible clues. If unclear, use "Indoor or undisclosed location".
 
 Return a single JSON object only, no markdown.`,
@@ -1367,7 +1390,7 @@ Return a single JSON object only, no markdown.`,
       {
         role: "system",
         content:
-          "You extract structured metadata for a short-form prediction-video app. Follow the user's JSON schema exactly.",
+          "You are an expert at writing sharp, specific betting predictions for a short-form video app. Predictions must reference concrete visible objects and actions from the clip — never generic filler. Use the character's personality to inform probability estimates. Follow the user's JSON schema exactly.",
       },
       { role: "user", content: userContent },
     ],
