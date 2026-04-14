@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  outputFileTracingIncludes: {
+    "/*": ["./bin/ffmpeg"],
+  },
   transpilePackages: [
     "@bettok/types",
     "@bettok/core",
