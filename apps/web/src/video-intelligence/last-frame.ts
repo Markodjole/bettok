@@ -7,7 +7,8 @@ import { execFile } from "child_process";
 import { writeFile, readFile, mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { getFfmpegBinaryPath, getFfprobeBinaryPath } from "@/lib/ffmpeg-paths";
+import { getFfmpegBinaryPath } from "@/lib/ffmpeg-paths";
+import { getVideoDurationMs } from "./frame-sampler";
 
 function ffmpegExec(args: string[], timeoutMs = 30_000): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -18,18 +19,9 @@ function ffmpegExec(args: string[], timeoutMs = 30_000): Promise<string> {
   });
 }
 
-function ffprobeExec(args: string[], timeoutMs = 10_000): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(getFfprobeBinaryPath(), args, { timeout: timeoutMs }, (err, stdout, stderr) => {
-      if (err) reject(new Error(`ffprobe failed: ${err.message}\n${stderr}`));
-      else resolve(stdout);
-    });
-  });
-}
-
 /**
  * Extract the last frame of a video as a JPEG buffer.
- * Strategy: get duration via ffprobe, seek to (duration - 0.1s), grab 1 frame.
+ * Strategy: get duration via ffmpeg stderr probe, seek to (duration - 0.1s), grab 1 frame.
  */
 export async function extractLastFrame(videoBytes: Uint8Array): Promise<Buffer> {
   const dir = await mkdtemp(join(tmpdir(), "lastframe-"));
@@ -38,13 +30,8 @@ export async function extractLastFrame(videoBytes: Uint8Array): Promise<Buffer> 
   await writeFile(inPath, videoBytes);
 
   try {
-    const durationRaw = await ffprobeExec([
-      "-v", "error",
-      "-show_entries", "format=duration",
-      "-of", "default=noprint_wrappers=1:nokey=1",
-      inPath,
-    ]);
-    const durationSec = parseFloat(durationRaw.trim());
+    const durationMs = await getVideoDurationMs(inPath);
+    const durationSec = durationMs / 1000;
     const seekTo = Math.max(0, durationSec - 0.1);
 
     await ffmpegExec([

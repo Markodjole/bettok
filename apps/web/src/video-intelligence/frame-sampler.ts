@@ -7,7 +7,8 @@ import { execFile } from "child_process";
 import { writeFile, readFile, readdir, unlink, mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { getFfmpegBinaryPath, getFfprobeBinaryPath } from "@/lib/ffmpeg-paths";
+import { getFfmpegBinaryPath } from "@/lib/ffmpeg-paths";
+import { ffmpegProbeMediaLog, parseDurationMsFromFfmpegLog, parseVideoMetaFromFfmpegLog } from "./ffmpeg-probe";
 import type { SampledFrame } from "./types";
 
 const MAX_FRAMES = 10;
@@ -25,23 +26,9 @@ function ffmpegExec(args: string[], timeoutMs = 30_000): Promise<string> {
   });
 }
 
-function ffprobeExec(args: string[], timeoutMs = 10_000): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(getFfprobeBinaryPath(), args, { timeout: timeoutMs }, (err, stdout, stderr) => {
-      if (err) reject(new Error(`ffprobe failed: ${err.message}\n${stderr}`));
-      else resolve(stdout);
-    });
-  });
-}
-
 export async function getVideoDurationMs(videoPath: string): Promise<number> {
-  const raw = await ffprobeExec([
-    "-v", "error",
-    "-show_entries", "format=duration",
-    "-of", "default=noprint_wrappers=1:nokey=1",
-    videoPath,
-  ]);
-  return Math.round(parseFloat(raw.trim()) * 1000);
+  const log = await ffmpegProbeMediaLog(videoPath);
+  return parseDurationMsFromFfmpegLog(log);
 }
 
 export type ProbedVideoMeta = {
@@ -52,42 +39,12 @@ export type ProbedVideoMeta = {
   codec: string;
 };
 
-/** ffprobe a file on disk (path should use a sensible extension for the container). */
+/** Probe a file on disk via ffmpeg stderr (path should use a sensible extension for the container). */
 export async function probeVideoFileOnDisk(videoPath: string): Promise<ProbedVideoMeta> {
-  const raw = await ffprobeExec(
-    [
-      "-v",
-      "error",
-      "-select_streams",
-      "v:0",
-      "-show_entries",
-      "stream=width,height,codec_name,bit_rate",
-      "-show_entries",
-      "format=duration,bit_rate",
-      "-of",
-      "json",
-      videoPath,
-    ],
-    20_000,
-  );
-  const o = JSON.parse(raw) as {
-    streams?: Array<{ width?: number; height?: number; codec_name?: string; bit_rate?: string }>;
-    format?: { duration?: string; bit_rate?: string };
-  };
-  const stream = o.streams?.[0];
-  const format = o.format;
-  const durationSec = parseFloat(format?.duration || "0");
-  const br =
-    Number(stream?.bit_rate) ||
-    Number(format?.bit_rate) ||
-    0;
-  return {
-    durationMs: Math.round(durationSec * 1000),
-    width: Number(stream?.width) || 0,
-    height: Number(stream?.height) || 0,
-    bitRate: br,
-    codec: String(stream?.codec_name || ""),
-  };
+  const log = await ffmpegProbeMediaLog(videoPath, 20_000);
+  const durationMs = parseDurationMsFromFfmpegLog(log);
+  const { width, height, bitRate, codec } = parseVideoMetaFromFfmpegLog(log);
+  return { durationMs, width, height, bitRate, codec };
 }
 
 /** Write bytes to a temp file, probe, delete temp dir. */
@@ -110,7 +67,7 @@ export function safeContainerExt(fileExt: string): string {
 }
 
 /**
- * Re-encode to H.264 + AAC MP4 so ffmpeg/ffprobe can sample frames (fixes iPhone HEVC MOV,
+ * Re-encode to H.264 + AAC MP4 so ffmpeg can sample frames (fixes iPhone HEVC MOV,
  * odd WebM, wrong-on-disk extensions, etc.).
  */
 export async function transcodeToH264Mp4(
@@ -224,61 +181,32 @@ function formatIso6709Location(raw: string): string | null {
 }
 
 /**
- * Best-effort location hint from container metadata (GPS / QuickTime location tags).
- * Does not call the network; uses ffprobe only.
+ * Best-effort location hint from container metadata.
+ * Without ffprobe JSON tags we only parse ffmpeg stderr / ffmetadata-style lines when present.
  */
 export async function extractContainerLocationHintFromBytes(
   videoBytes: Uint8Array,
   fileExt = "mp4",
 ): Promise<string | null> {
-  const dir = await mkdtemp(join(tmpdir(), "ffprobe-loc-"));
+  const dir = await mkdtemp(join(tmpdir(), "ffmpeg-loc-"));
   const ext = /^[a-z0-9]+$/i.test(fileExt) ? fileExt : "mp4";
   const inPath = join(dir, `in.${ext}`);
   await writeFile(inPath, videoBytes);
   try {
-    const raw = await ffprobeExec(
-      ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", inPath],
-      20_000,
-    );
-    const o = JSON.parse(raw) as {
-      format?: { tags?: Record<string, string> };
-      streams?: Array<{ tags?: Record<string, string> }>;
-    };
-    const merged: Record<string, string> = { ...(o.format?.tags || {}) };
-    for (const s of o.streams || []) {
-      for (const [k, v] of Object.entries(s.tags || {})) {
-        if (typeof v === "string" && v.trim()) merged[k] = v.trim();
-      }
+    let text: string;
+    try {
+      text = await ffmpegProbeMediaLog(inPath, 20_000);
+    } catch {
+      return null;
     }
-    const lower = new Map<string, string>();
-    for (const [k, v] of Object.entries(merged)) {
-      lower.set(k.toLowerCase(), v);
-    }
-
     const iso6709 =
-      lower.get("com.apple.quicktime.location.iso6709") ||
-      lower.get("location-iso6709") ||
-      lower.get("location_iso6709");
+      text.match(/com\.apple\.quicktime\.location\.iso6709[=:\s]+([^\s;)]+)/i)?.[1]?.trim() ||
+      text.match(/\blocation[_-]?iso6709[=:\s]+([^\s;)]+)/i)?.[1]?.trim() ||
+      "";
     if (iso6709) {
       const formatted = formatIso6709Location(iso6709);
       if (formatted) return `From device metadata: ${formatted}`;
     }
-
-    const loc =
-      lower.get("location") ||
-      lower.get("location-eng") ||
-      lower.get("location_eng") ||
-      lower.get("com.apple.quicktime.location.name");
-    if (loc && loc.length > 2) {
-      return loc.length > 200 ? `From file: ${loc.slice(0, 197)}…` : `From file: ${loc}`;
-    }
-
-    const lat = lower.get("gps_latitude") || lower.get("latitude");
-    const lon = lower.get("gps_longitude") || lower.get("longitude");
-    if (lat && lon) {
-      return `From file: ${lat}, ${lon}`.slice(0, 240);
-    }
-
     return null;
   } catch {
     return null;
