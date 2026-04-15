@@ -227,11 +227,17 @@ async function runPipeline(analysisId: string, clipNodeId: string) {
         .map((o) => `${o.label}: ${o.state}`);
     }
     if (anchors.cameraStyle.length === 0 && observed.camera) {
-      anchors.cameraStyle = [
-        observed.camera.shotType,
-        observed.camera.cameraAngle,
-        observed.camera.cameraMotion,
-      ].filter((v): v is string => !!v && v !== "unknown");
+      const cameraStyle: string[] = [];
+      if (observed.camera.shotType && observed.camera.shotType !== "unknown") {
+        cameraStyle.push(observed.camera.shotType);
+      }
+      if (observed.camera.cameraAngle && observed.camera.cameraAngle !== "unknown") {
+        cameraStyle.push(observed.camera.cameraAngle);
+      }
+      if (observed.camera.cameraMotion && observed.camera.cameraMotion !== "unknown") {
+        cameraStyle.push(observed.camera.cameraMotion);
+      }
+      anchors.cameraStyle = cameraStyle;
     }
 
     const analysis: VideoAnalysis = {
