@@ -160,6 +160,7 @@ function CreatePageClient() {
   const [ownerSetupBusy, setOwnerSetupBusy] = useState(false);
   const ownerSetupVideoRef = useRef<HTMLInputElement>(null);
 
+
   useEffect(() => {
     let mounted = true;
 
@@ -643,6 +644,7 @@ function CreatePageClient() {
         description:
           "We inferred scene, bet options, and location from your file and frames. Review below, then post — full video analysis still runs after publish like other clips.",
       });
+
     } catch (err: any) {
       toast({
         title: "Setup upload failed",
@@ -833,6 +835,7 @@ function CreatePageClient() {
         toast({ title: "Publish failed", description: res.error, variant: "destructive" });
         return;
       }
+
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(CREATE_REVIEW_CACHE_KEY);
       }

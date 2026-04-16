@@ -1818,6 +1818,11 @@ export async function publishCharacterDraft(input: {
       .find((v) => v && !/indoor or undisclosed location/i.test(v))
       ?.slice(0, 320) ?? null;
 
+    // feed_clips reads capture_location_text from llm_generation_json — clip_nodes has no dedicated column (00036).
+    if (captureLocationText) {
+      (llmStored as Record<string, unknown>).capture_location_text = captureLocationText;
+    }
+
     const { data: clipNode, error: clipErr } = await serviceClient
       .from("clip_nodes")
       .insert({
@@ -1831,7 +1836,6 @@ export async function publishCharacterDraft(input: {
         first_frame_storage_path: input.imageStoragePath,
         llm_generation_json: llmStored,
         scene_summary: input.sceneSummary,
-        capture_location_text: captureLocationText,
         transcript,
         published_at: now,
         betting_deadline: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),

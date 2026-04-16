@@ -41,6 +41,7 @@ export interface FeedClip {
   character_slug?: string | null;
   character_tagline?: string | null;
   character_betting_signals?: Record<string, unknown> | null;
+  has_frame_options?: boolean;
 }
 
 const isDbUnavailable = (err: { code?: string; message?: string }) =>

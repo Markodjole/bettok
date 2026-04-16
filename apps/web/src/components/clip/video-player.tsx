@@ -3,7 +3,15 @@
 import { useRef, useEffect, useState, useCallback, type MouseEvent } from "react";
 import { useFeedStore } from "@/stores/feed-store";
 import { cn } from "@/lib/utils";
-import { Play, Pause } from "lucide-react";
+import { Play, Pause, Loader2 } from "lucide-react";
+import type { NormalizedBox } from "@/lib/frame-options/types";
+
+export interface VideoFrameOption {
+  id: string;
+  label: string;
+  shortLabel: string | null;
+  normalizedBox: NormalizedBox;
+}
 
 interface VideoPlayerProps {
   src: string | null;
@@ -16,6 +24,10 @@ interface VideoPlayerProps {
   onLoopEnd?: () => void;
   pausedByParent?: boolean;
   forceMuted?: boolean;
+  /** Enable pause-to-detect: when user pauses, analyze current frame for tappable objects */
+  enableFrameDetection?: boolean;
+  /** Called when a user taps a detected frame option (label text for new prediction) */
+  onFrameOptionTap?: (option: VideoFrameOption) => void;
 }
 
 export function VideoPlayer({
@@ -28,6 +40,8 @@ export function VideoPlayer({
   onLoopEnd,
   pausedByParent = false,
   forceMuted = false,
+  enableFrameDetection = false,
+  onFrameOptionTap,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const controlsHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -44,9 +58,13 @@ export function VideoPlayer({
   const [zoomOrigin, setZoomOrigin] = useState("50% 50%");
   const [activeSubtitle, setActiveSubtitle] = useState("");
   const isMuted = useFeedStore((s) => s.isMuted);
-  const toggleMute = useFeedStore((s) => s.toggleMute);
   const subtitleCuesRef = useRef<Array<{ start: number; end: number; text: string }>>([]);
   const activeSubtitleRef = useRef("");
+
+  // Pause-to-detect state
+  const [detecting, setDetecting] = useState(false);
+  const [detectedOptions, setDetectedOptions] = useState<VideoFrameOption[]>([]);
+  const detectAbortRef = useRef(0);
 
   const tryPlay = useCallback(() => {
     const video = videoRef.current;
@@ -168,25 +186,81 @@ export function VideoPlayer({
     }
   }, [pauseStartMs, onLoopEnd]);
 
+  // Capture current video frame to base64 JPEG
+  const captureFrame = useCallback((): string | null => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    return dataUrl.split(",")[1] ?? null;
+  }, []);
+
+  // Run detection on the paused frame
+  const runPauseDetection = useCallback(async () => {
+    if (!enableFrameDetection) return;
+    const base64 = captureFrame();
+    if (!base64) return;
+
+    const thisRun = ++detectAbortRef.current;
+    setDetecting(true);
+    setDetectedOptions([]);
+
+    try {
+      const { detectFrameOptions } = await import("@/actions/frame-options");
+      const result = await detectFrameOptions({ frameBase64: base64 });
+
+      if (detectAbortRef.current !== thisRun) return;
+
+      if (result.candidates.length > 0) {
+        const mapped: VideoFrameOption[] = result.candidates.map((c) => ({
+          id: c.tempId,
+          label: c.label,
+          shortLabel: c.shortLabel ?? null,
+          normalizedBox: c.normalizedBox,
+        }));
+        setDetectedOptions(numberDuplicateLabels(mapped));
+      }
+    } catch {
+      // Detection failed silently
+    } finally {
+      if (detectAbortRef.current === thisRun) {
+        setDetecting(false);
+      }
+    }
+  }, [enableFrameDetection, captureFrame]);
+
+  // Cancel detection when unpaused
+  const cancelDetection = useCallback(() => {
+    detectAbortRef.current++;
+    setDetecting(false);
+    setDetectedOptions([]);
+  }, []);
+
   const handleTap = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
 
-    // If currently playing, always pause immediately (never intercept with unmute logic).
     if (!video.paused) {
       video.pause();
       setIsPlaying(false);
+      runPauseDetection();
       return;
     }
 
-    // If browser forced muted autoplay, first resume tap should unmute + play.
+    // Unpausing — cancel any detection
+    cancelDetection();
     if (browserForcedMuteRef.current) {
       browserForcedMuteRef.current = false;
       video.muted = false;
     }
     video.play();
     setIsPlaying(true);
-  }, []);
+  }, [runPauseDetection, cancelDetection]);
 
   const showControlsBriefly = useCallback(() => {
     setShowControls(true);
@@ -201,7 +275,12 @@ export function VideoPlayer({
     const video = videoRef.current;
     if (!video) return;
 
-    // While paused, delay single-tap action briefly so a second quick tap can toggle zoom.
+    // When hotspots are showing, ignore background taps so users can
+    // interact with hotspot buttons without accidentally unpausing.
+    if (video.paused && detectedOptions.length > 0) {
+      return;
+    }
+
     if (video.paused) {
       const rect = e.currentTarget.getBoundingClientRect();
       const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
@@ -232,7 +311,7 @@ export function VideoPlayer({
 
     handleTap();
     showControlsBriefly();
-  }, [handleTap, showControlsBriefly]);
+  }, [handleTap, showControlsBriefly, detectedOptions.length]);
 
   useEffect(() => {
     return () => {
@@ -282,6 +361,8 @@ export function VideoPlayer({
     setActiveSubtitle("");
   }, [subtitleText]);
 
+  const showDetectedOverlay = !isPlaying && (detecting || detectedOptions.length > 0);
+
   return (
     <div
       className={cn("relative h-full w-full bg-black overflow-hidden", className)}
@@ -291,6 +372,7 @@ export function VideoPlayer({
         ref={videoRef}
         src={fullSrc}
         poster={posterUrl}
+        crossOrigin="anonymous"
         loop
         playsInline
         muted={forceMuted || isMuted}
@@ -331,10 +413,87 @@ export function VideoPlayer({
         </div>
       ) : null}
 
+      {/* Pause-to-detect: loading spinner */}
+      {detecting && (
+        <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center">
+          <div className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-2 backdrop-blur-sm">
+            <Loader2 className="h-4 w-4 animate-spin text-white" />
+            <span className="text-xs font-medium text-white/90">Detecting objects…</span>
+          </div>
+        </div>
+      )}
+
+      {/* Pause-to-detect: detected hotspots */}
+      {!detecting && detectedOptions.length > 0 && !isPlaying && (
+        <div className="absolute inset-0 z-[25] pointer-events-none">
+          {detectedOptions.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              className="pointer-events-auto absolute overflow-visible touch-manipulation group transition-all duration-300 animate-[fadeIn_0.3s_ease-out]"
+              style={{
+                left: `${opt.normalizedBox.x * 100}%`,
+                top: `${opt.normalizedBox.y * 100}%`,
+                width: `${opt.normalizedBox.width * 100}%`,
+                height: `${opt.normalizedBox.height * 100}%`,
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onFrameOptionTap?.(opt);
+              }}
+              aria-label={`Predict on ${opt.label}`}
+            >
+              <div className="absolute inset-0 rounded-lg border-2 border-white/50 bg-white/5 transition-all group-hover:border-white/80 group-hover:bg-white/15 group-active:bg-white/25 group-active:border-primary" />
+
+              <div className="absolute -right-1 -top-1 h-2.5 w-2.5">
+                <div className="absolute inset-0 rounded-full bg-white/80" />
+                <div className="absolute inset-0 animate-ping rounded-full bg-white/40" />
+              </div>
+
+              <div
+                className={cn(
+                  "absolute left-1/2 -translate-x-1/2 whitespace-nowrap",
+                  "rounded-full bg-black/60 px-2.5 py-0.5 text-[10px] font-semibold text-white/90 leading-tight",
+                  "shadow-md backdrop-blur-sm transition-all",
+                  "group-hover:bg-black/80 group-active:bg-primary",
+                  opt.normalizedBox.y > 0.12 ? "-top-5" : "top-full mt-1",
+                )}
+              >
+                {opt.label}
+              </div>
+            </button>
+          ))}
+
+          {/* Resume play button */}
+          <button
+            type="button"
+            className="pointer-events-auto absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex h-14 w-14 items-center justify-center rounded-full bg-black/40 backdrop-blur-sm touch-manipulation transition hover:bg-black/60"
+            onClick={(e) => {
+              e.stopPropagation();
+              cancelDetection();
+              const video = videoRef.current;
+              if (video) {
+                video.play();
+                setIsPlaying(true);
+              }
+            }}
+            aria-label="Resume playback"
+          >
+            <Play className="ml-0.5 h-7 w-7 text-white/80" />
+          </button>
+
+          <div className="pointer-events-none absolute bottom-16 left-3 right-3 flex justify-center">
+            <p className="rounded-full bg-black/50 px-3 py-1 text-[10px] font-medium text-white/70 backdrop-blur-sm">
+              Tap an object to add prediction
+            </p>
+          </div>
+        </div>
+      )}
+
       <div
         className={cn(
           "absolute inset-0 flex items-center justify-center transition-opacity",
-          showControls ? "opacity-100" : "opacity-0"
+          showControls && !showDetectedOverlay ? "opacity-100" : "opacity-0"
         )}
       >
         <button
@@ -354,6 +513,30 @@ export function VideoPlayer({
       </div>
     </div>
   );
+}
+
+function numberDuplicateLabels(candidates: VideoFrameOption[]): VideoFrameOption[] {
+  const counts = new Map<string, number>();
+  for (const c of candidates) {
+    const key = (c.shortLabel || c.label).toLowerCase().trim();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  const indices = new Map<string, number>();
+  return candidates.map((c) => {
+    const key = (c.shortLabel || c.label).toLowerCase().trim();
+    const total = counts.get(key) ?? 1;
+    if (total <= 1) return c;
+
+    const idx = (indices.get(key) ?? 0) + 1;
+    indices.set(key, idx);
+
+    return {
+      ...c,
+      label: `${c.label} ${idx}`,
+      shortLabel: c.shortLabel ? `${c.shortLabel} ${idx}` : null,
+    };
+  });
 }
 
 function buildSubtitleCues(

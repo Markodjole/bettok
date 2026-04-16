@@ -23,12 +23,15 @@ interface BettingBottomSheetProps {
   clipId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Pre-fill the "add prediction" input (e.g. from visual frame tap) */
+  initialPredictionText?: string;
 }
 
 export function BettingBottomSheet({
   clipId,
   open,
   onOpenChange,
+  initialPredictionText,
 }: BettingBottomSheetProps) {
   const markets = useClipMarketsStore((s) => s.getMarkets(clipId));
   const refetchMarkets = useClipMarketsStore((s) => s.refetchMarkets);
@@ -48,6 +51,27 @@ export function BettingBottomSheet({
       loadMarkets();
     }
   }, [open, loadMarkets]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!initialPredictionText?.trim()) return;
+
+    const target = normalizePredictionText(initialPredictionText);
+    if (!target) return;
+
+    const matchingMarket = markets.find((market) => {
+      const canonical = normalizePredictionText(market.canonical_text);
+      return canonical.includes(target) || target.includes(canonical);
+    });
+
+    if (matchingMarket) {
+      setSelectedMarket(matchingMarket);
+      setSelectedSide("yes");
+    } else {
+      setSelectedMarket(null);
+      setSelectedSide(null);
+    }
+  }, [open, initialPredictionText, markets]);
 
   function handleSelectSide(market: ClipMarket, side: "yes" | "no") {
     setSelectedMarket(market);
@@ -129,6 +153,7 @@ export function BettingBottomSheet({
               onBetPlaced={() => {
                 handleBack();
                 refetchMarkets(clipId);
+                onOpenChange(false);
               }}
             />
           ) : (
@@ -183,6 +208,7 @@ export function BettingBottomSheet({
                 clipNodeId={clipId}
                 onPredictionAdded={loadMarkets}
                 existingPredictions={markets.map((m) => m.canonical_text)}
+                initialText={initialPredictionText}
               />
             </div>
           </>
@@ -190,4 +216,13 @@ export function BettingBottomSheet({
       </SheetContent>
     </Sheet>
   );
+}
+
+function normalizePredictionText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/^choose\s+/, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }

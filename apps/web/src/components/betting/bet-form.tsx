@@ -96,6 +96,7 @@ export function BetForm({
       if (wallet) {
         setWallet({ ...wallet, balance: balance - numAmount });
       }
+      useFeedStore.getState().bumpMyBetsRevision();
       setAmount("");
       onBetPlaced();
     }

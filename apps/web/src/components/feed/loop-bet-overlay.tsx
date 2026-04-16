@@ -92,6 +92,7 @@ export function LoopBetOverlay({ clipId, onExpandedChange, openAllSignal = 0 }: 
     } else {
       toast({ title: "Bet placed!", description: `${formatCurrency(lastStakeAmount)} on ${side.toUpperCase()}`, variant: "success" });
       if (wallet) setWallet({ ...wallet, balance: wallet.balance - lastStakeAmount });
+      useFeedStore.getState().bumpMyBetsRevision();
       refetchMarkets(clipId);
     }
   }

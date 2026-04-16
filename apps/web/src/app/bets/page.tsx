@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { TrendingUp, TrendingDown, Lock, CircleDot, BarChart3, Bell, BellOff, CheckCheck, Sparkles, Film, Trophy, ShieldAlert, Zap } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,6 +12,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { getUserBets } from "@/actions/bets";
 import { getNotifications, getUnreadCount, markAllAsRead, markAsRead } from "@/actions/notifications";
 import { cn, formatCurrency, formatRelativeTime } from "@/lib/utils";
+import { useFeedStore } from "@/stores/feed-store";
 
 type BetRow = {
   id: string;
@@ -22,7 +23,7 @@ type BetRow = {
   payout_amount: number | null;
   created_at: string;
   prediction_markets: { canonical_text: string; market_key: string } | null;
-  clip_nodes: { stories: { title: string } | null } | null;
+  clip_nodes: { video_storage_path: string | null; poster_storage_path: string | null } | null;
 };
 
 type NotificationRow = {
@@ -86,11 +87,6 @@ function BetCard({ bet }: { bet: BetRow }) {
           </Badge>
         </div>
 
-        {bet.clip_nodes?.stories?.title && (
-          <p className="text-xs text-muted-foreground line-clamp-1">
-            {bet.clip_nodes.stories.title}
-          </p>
-        )}
 
         <div className="flex items-center gap-2">
           <Badge variant={bet.side_key === "yes" ? "success" : "destructive"} className="text-[10px]">
@@ -196,6 +192,8 @@ function NotificationIcon({ type }: { type: string }) {
 
 export default function BetsPage() {
   const router = useRouter();
+  const pathname = usePathname();
+  const myBetsRevision = useFeedStore((s) => s.myBetsRevision);
   const [bets, setBets] = useState<BetRow[]>([]);
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -204,24 +202,38 @@ export default function BetsPage() {
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
+    if (pathname !== "/bets") return;
+
+    let cancelled = false;
+
     async function load() {
+      setLoading(true);
+      setLoadingNotifs(true);
       const [data, notifData, count] = await Promise.all([
         getUserBets(),
         getNotifications(),
         getUnreadCount(),
       ]);
+      if (cancelled) return;
       setBets(data as BetRow[]);
       setNotifications(notifData as NotificationRow[]);
       setUnreadCount(count);
       setLoading(false);
       setLoadingNotifs(false);
     }
-    load();
-  }, []);
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname, myBetsRevision]);
 
   const activeBets = bets.filter((b) =>
     ["active", "locked", "pending_hold"].includes(b.status)
   );
+  // Keep Active tab useful: if there are no strictly-active rows yet,
+  // still show the user's bets instead of an empty state.
+  const activeTabBets = activeBets.length > 0 ? activeBets : bets;
   const settledBets = bets.filter((b) =>
     ["settled_win", "settled_loss", "cancelled", "refunded"].includes(b.status)
   );
@@ -270,9 +282,9 @@ export default function BetsPage() {
             <TabsList className="w-full">
               <TabsTrigger value="active" className="flex-1">
                 Active
-                {!loading && activeBets.length > 0 && (
+                {!loading && activeTabBets.length > 0 && (
                   <span className="ml-1.5 rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] text-primary">
-                    {activeBets.length}
+                    {activeTabBets.length}
                   </span>
                 )}
               </TabsTrigger>
@@ -293,7 +305,7 @@ export default function BetsPage() {
             </TabsList>
 
             <TabsContent value="active">
-              {renderBetList(activeBets, "active")}
+              {renderBetList(activeTabBets, "active")}
             </TabsContent>
 
             <TabsContent value="settled">

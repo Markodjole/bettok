@@ -29,12 +29,15 @@ interface FeedState {
   isMuted: boolean;
   lastStakeAmount: number;
   showFeedBets: boolean;
+  /** Bumped after a successful bet so /bets can refetch the list */
+  myBetsRevision: number;
   setCurrentIndex: (index: number) => void;
   hydratePreferences: () => void;
   toggleMute: () => void;
   setLastStakeAmount: (amount: number) => void;
   toggleFeedBets: () => void;
   setShowFeedBets: (visible: boolean) => void;
+  bumpMyBetsRevision: () => void;
 }
 
 export const useFeedStore = create<FeedState>((set) => ({
@@ -42,6 +45,7 @@ export const useFeedStore = create<FeedState>((set) => ({
   isMuted: false,
   lastStakeAmount: 10,
   showFeedBets: true,
+  myBetsRevision: 0,
   setCurrentIndex: (currentIndex) => set({ currentIndex }),
   hydratePreferences: () => {
     set({
@@ -66,4 +70,5 @@ export const useFeedStore = create<FeedState>((set) => ({
   toggleFeedBets: () =>
     set((s) => ({ showFeedBets: !s.showFeedBets })),
   setShowFeedBets: (visible) => set({ showFeedBets: visible }),
+  bumpMyBetsRevision: () => set((s) => ({ myBetsRevision: s.myBetsRevision + 1 })),
 }));

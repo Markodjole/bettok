@@ -14,16 +14,26 @@ interface AddPredictionProps {
   clipNodeId: string;
   onPredictionAdded: () => void;
   existingPredictions?: string[];
+  /** Pre-fill the prediction input (e.g. from visual frame tap) */
+  initialText?: string;
 }
 
 export function AddPrediction({
   clipNodeId,
   onPredictionAdded,
   existingPredictions = [],
+  initialText,
 }: AddPredictionProps) {
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText ?? "");
   const [loading, setLoading] = useState(false);
-  const [inputFocused, setInputFocused] = useState(false);
+  const [inputFocused, setInputFocused] = useState(!!initialText);
+
+  useEffect(() => {
+    if (initialText) {
+      setText(initialText);
+      setInputFocused(true);
+    }
+  }, [initialText]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [suggestionsError, setSuggestionsError] = useState<string | null>(null);
   const [suggestedPredictions, setSuggestedPredictions] = useState<

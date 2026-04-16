@@ -1,5 +1,6 @@
 "use server";
 
+import { unstable_noStore } from "next/cache";
 import { createServerClient, createServiceClient } from "@/lib/supabase/server";
 import { parseMarketResultsFromResolutionText } from "@/lib/bet-display";
 
@@ -140,6 +141,7 @@ export async function placeBet(input: {
 }
 
 export async function getUserBets(status?: string) {
+  unstable_noStore();
   const supabase = await createServerClient();
   const {
     data: { user },
@@ -152,7 +154,7 @@ export async function getUserBets(status?: string) {
       `
       *,
       prediction_markets(canonical_text, market_key),
-      clip_nodes(video_storage_path, poster_storage_path, stories(title))
+      clip_nodes(video_storage_path, poster_storage_path)
     `
     )
     .eq("user_id", user.id)
@@ -162,7 +164,11 @@ export async function getUserBets(status?: string) {
     query = query.eq("status", status);
   }
 
-  const { data } = await query;
+  const { data, error } = await query;
+  if (error) {
+    console.error("[getUserBets]", error.message);
+    return [];
+  }
   return data || [];
 }
 

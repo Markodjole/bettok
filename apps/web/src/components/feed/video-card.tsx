@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { useUserStore } from "@/stores/user-store";
 import { useFeedStore } from "@/stores/feed-store";
+
 import { createBrowserClient, getUserQueued } from "@/lib/supabase/client";
 import { formatCompactNumber, getMediaUrl } from "@/lib/utils";
 import {
@@ -71,6 +72,7 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
   const toggleMute = useFeedStore((s) => s.toggleMute);
   const showFeedBets = useFeedStore((s) => s.showFeedBets);
   const setShowFeedBets = useFeedStore((s) => s.setShowFeedBets);
+  const [frameOptionPredictionText, setFrameOptionPredictionText] = useState<string | undefined>();
 
   useEffect(() => {
     getUserQueued().then(({ data: { user } }) => {
@@ -209,6 +211,11 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
             isActive={isActive}
             onLoopEnd={handleLoopEnd}
             forceMuted={overlayExpanded}
+            enableFrameDetection={isBettingOpen && !isExpired}
+            onFrameOptionTap={(opt) => {
+              setFrameOptionPredictionText(`Choose ${opt.label}`);
+              setShowBetting(true);
+            }}
           />
           {isActive && loopCount === 0 && (
             <CommentsFirstLoop clipId={clip.id} />
@@ -443,7 +450,11 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
       <BettingBottomSheet
         clipId={clip.id}
         open={showBetting}
-        onOpenChange={setShowBetting}
+        onOpenChange={(open) => {
+          setShowBetting(open);
+          if (!open) setFrameOptionPredictionText(undefined);
+        }}
+        initialPredictionText={frameOptionPredictionText}
       />
     </div>
   );
@@ -686,3 +697,4 @@ function CharacterQuickRead({
     </>
   );
 }
+
