@@ -1280,9 +1280,9 @@ function CreatePageClient() {
                             ?? selectedCharacter.reference_images[0];
                           const imgUrl = primary ? getMediaUrl(primary.image_storage_path) : null;
                           return imgUrl ? (
-                            <img src={imgUrl} alt={selectedCharacter.name} className="h-[50vh] w-full object-cover bg-black/30" />
+                            <img src={imgUrl} alt={selectedCharacter.name} className="h-[42vh] w-full object-cover bg-black/30" />
                           ) : (
-                            <div className="flex h-[50vh] items-center justify-center bg-muted">
+                            <div className="flex h-[42vh] items-center justify-center bg-muted">
                               <Users className="h-16 w-16 text-muted-foreground/40" />
                             </div>
                           );
@@ -1362,11 +1362,12 @@ function CreatePageClient() {
                             <Upload className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                             <div className="space-y-1">
                               <p className="text-sm font-medium text-foreground">Upload your setup clip</p>
-                              <ul className="list-disc space-y-1 pl-4 text-[11px] leading-relaxed text-muted-foreground">
-                                <li>Length 3–20 seconds.</li>
+                              <ul className="list-disc  pl-4 text-[11px] leading-relaxed text-muted-foreground">
+                                <li>Length 5–20 seconds.</li>
                                 <li>{selectedCharacter.name} as main character or POV</li>
                                 <li>Show 2+ clear possible outcomes</li>
                                 <li>Good camera and light so details are clear</li>
+                                <li>Keep it interesting</li>
                               </ul>
                             </div>
                           </div>
