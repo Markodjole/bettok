@@ -203,6 +203,7 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
           <VideoPlayer
             src={clip.video_storage_path}
             poster={clip.poster_storage_path}
+            subtitleText={clip.transcript}
             pauseStartMs={clip.pause_start_ms}
             durationMs={clip.duration_ms}
             isActive={isActive}
@@ -269,16 +270,6 @@ export function VideoCard({ clip, isActive }: VideoCardProps) {
           >
             <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
             <span>{clip.capture_location_text.trim()}</span>
-          </p>
-        ) : null}
-
-        {clip.transcript?.trim() ? (
-          <p
-            className="rounded-md bg-black/60 px-2.5 py-1.5 text-left text-sm font-medium leading-snug text-white shadow-md [text-shadow:0_1px_2px_rgba(0,0,0,0.95)] line-clamp-4"
-            role="status"
-            aria-live="polite"
-          >
-            {clip.transcript.trim()}
           </p>
         ) : null}
 

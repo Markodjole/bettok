@@ -8,6 +8,7 @@ import { Play, Pause } from "lucide-react";
 interface VideoPlayerProps {
   src: string | null;
   poster?: string | null;
+  subtitleText?: string | null;
   pauseStartMs?: number | null;
   durationMs?: number | null;
   isActive?: boolean;
@@ -20,6 +21,7 @@ interface VideoPlayerProps {
 export function VideoPlayer({
   src,
   poster,
+  subtitleText,
   pauseStartMs,
   isActive = true,
   className,
@@ -40,8 +42,11 @@ export function VideoPlayer({
   const [isExtremeLandscape, setIsExtremeLandscape] = useState(false);
   const [isZoomed, setIsZoomed] = useState(false);
   const [zoomOrigin, setZoomOrigin] = useState("50% 50%");
+  const [activeSubtitle, setActiveSubtitle] = useState("");
   const isMuted = useFeedStore((s) => s.isMuted);
   const toggleMute = useFeedStore((s) => s.toggleMute);
+  const subtitleCuesRef = useRef<Array<{ start: number; end: number; text: string }>>([]);
+  const activeSubtitleRef = useRef("");
 
   const tryPlay = useCallback(() => {
     const video = videoRef.current;
@@ -130,6 +135,18 @@ export function VideoPlayer({
 
     const pct = (t / video.duration) * 100;
     setProgress(isNaN(pct) ? 0 : pct);
+
+    if (subtitleCuesRef.current.length > 0) {
+      const cue = subtitleCuesRef.current.find((c) => t >= c.start && t < c.end);
+      const nextSubtitle = cue?.text ?? "";
+      if (nextSubtitle !== activeSubtitleRef.current) {
+        activeSubtitleRef.current = nextSubtitle;
+        setActiveSubtitle(nextSubtitle);
+      }
+    } else if (activeSubtitleRef.current) {
+      activeSubtitleRef.current = "";
+      setActiveSubtitle("");
+    }
 
     const atPausePoint = pauseStartMs && t * 1000 >= pauseStartMs;
     const atVideoEnd = !pauseStartMs && video.duration > 0 && t >= video.duration - 0.25;
@@ -242,7 +259,28 @@ export function VideoPlayer({
     if (!video) return;
     const ratio = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 1;
     setIsExtremeLandscape(ratio > 1.3);
-  }, []);
+
+    if (subtitleText?.trim() && video.duration > 0) {
+      subtitleCuesRef.current = buildSubtitleCues(subtitleText, video.duration);
+    } else {
+      subtitleCuesRef.current = [];
+      activeSubtitleRef.current = "";
+      setActiveSubtitle("");
+    }
+  }, [subtitleText]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !subtitleText?.trim() || !(video.duration > 0)) {
+      subtitleCuesRef.current = [];
+      activeSubtitleRef.current = "";
+      setActiveSubtitle("");
+      return;
+    }
+    subtitleCuesRef.current = buildSubtitleCues(subtitleText, video.duration);
+    activeSubtitleRef.current = "";
+    setActiveSubtitle("");
+  }, [subtitleText]);
 
   return (
     <div
@@ -281,6 +319,18 @@ export function VideoPlayer({
         )}
       </div>
 
+      {activeSubtitle ? (
+        <div className="pointer-events-none absolute bottom-8 left-3 right-3 z-20 flex justify-center">
+          <p
+            className="max-w-[92%] rounded-md bg-black/65 px-3 py-1.5 text-center text-sm font-medium leading-snug text-white shadow-md [text-shadow:0_1px_2px_rgba(0,0,0,0.95)]"
+            role="status"
+            aria-live="polite"
+          >
+            {activeSubtitle}
+          </p>
+        </div>
+      ) : null}
+
       <div
         className={cn(
           "absolute inset-0 flex items-center justify-center transition-opacity",
@@ -304,4 +354,35 @@ export function VideoPlayer({
       </div>
     </div>
   );
+}
+
+function buildSubtitleCues(
+  text: string,
+  durationSec: number,
+): Array<{ start: number; end: number; text: string }> {
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (!clean || durationSec <= 0) return [];
+
+  const words = clean.split(" ");
+  const chunkSize = words.length <= 6 ? words.length : words.length <= 18 ? 4 : 6;
+  const chunks: string[] = [];
+  for (let i = 0; i < words.length; i += chunkSize) {
+    chunks.push(words.slice(i, i + chunkSize).join(" "));
+  }
+
+  const cues: Array<{ start: number; end: number; text: string }> = [];
+  let cursor = 0;
+  for (const chunk of chunks) {
+    const estimated = Math.max(1.2, Math.min(3.2, chunk.length / 13));
+    const start = cursor;
+    const end = Math.min(durationSec, start + estimated);
+    cues.push({ start, end, text: chunk });
+    cursor = end;
+    if (cursor >= durationSec) break;
+  }
+
+  if (cues.length > 0) {
+    cues[cues.length - 1].end = durationSec;
+  }
+  return cues;
 }

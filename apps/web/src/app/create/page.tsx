@@ -1299,49 +1299,53 @@ function CreatePageClient() {
                           )}
                         </div>
                       </button>
-                      <CharacterFieldWithSuggestions
-                        id="locationText"
-                        label="Location / Setting"
-                        hint={
-                          <p className="text-[11px] text-muted-foreground">
-                            Sent only as setting — describe movement below so nothing is duplicated or cut off.
-                            Each location here unlocks matching scene lines and cliffhangers for {selectedCharacter.name}.
-                          </p>
-                        }
-                        placeholder="e.g. rooftop bar, park bench, city street"
-                        value={locationText}
-                        onChange={setLocationText}
-                        maxLength={LOCATION_TEXT_MAX}
-                        suggestions={locationIdeas}
-                        suggestionsTitle={`Settings for ${selectedCharacter.name} — each row is paired with specific scenes`}
-                      />
+                      {!isCharacterOwner ? (
+                        <>
+                          <CharacterFieldWithSuggestions
+                            id="locationText"
+                            label="Location / Setting"
+                            hint={
+                              <p className="text-[11px] text-muted-foreground">
+                                Sent only as setting — describe movement below so nothing is duplicated or cut off.
+                                Each location here unlocks matching scene lines and cliffhangers for {selectedCharacter.name}.
+                              </p>
+                            }
+                            placeholder="e.g. rooftop bar, park bench, city street"
+                            value={locationText}
+                            onChange={setLocationText}
+                            maxLength={LOCATION_TEXT_MAX}
+                            suggestions={locationIdeas}
+                            suggestionsTitle={`Settings for ${selectedCharacter.name} — each row is paired with specific scenes`}
+                          />
 
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        className="w-full gap-2"
-                        disabled={!locationText.trim() || aiClipLoading || running}
-                        onClick={() => void handleAiSuggestClipIdeas()}
-                      >
-                        {aiClipLoading ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            Generating ideas…
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="h-4 w-4" />
-                            AI suggest movement & cliffhanger
-                          </>
-                        )}
-                      </Button>
-                      <p className="text-[11px] text-muted-foreground leading-snug">
-                        Uses your profile + location + mood/camera. Picks follow video rules (smooth motion, in-character,
-                        no speech, paired cliffhangers). Set{" "}
-                        <span className="font-medium text-foreground">LLM_MODEL_CHARACTER_CLIP_SUGGEST</span> (ideas + video
-                        prompt JSON) or <span className="font-medium text-foreground">LLM_MODEL_CHARACTER_VIDEO</span> for
-                        Kling scenes only — default is <span className="font-medium text-foreground">gpt-4o</span> if unset.
-                      </p>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            className="w-full gap-2"
+                            disabled={!locationText.trim() || aiClipLoading || running}
+                            onClick={() => void handleAiSuggestClipIdeas()}
+                          >
+                            {aiClipLoading ? (
+                              <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Generating ideas…
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="h-4 w-4" />
+                                AI suggest movement & cliffhanger
+                              </>
+                            )}
+                          </Button>
+                          <p className="text-[11px] text-muted-foreground leading-snug">
+                            Uses your profile + location + mood/camera. Picks follow video rules (smooth motion, in-character,
+                            no speech, paired cliffhangers). Set{" "}
+                            <span className="font-medium text-foreground">LLM_MODEL_CHARACTER_CLIP_SUGGEST</span> (ideas + video
+                            prompt JSON) or <span className="font-medium text-foreground">LLM_MODEL_CHARACTER_VIDEO</span> for
+                            Kling scenes only — default is <span className="font-medium text-foreground">gpt-4o</span> if unset.
+                          </p>
+                        </>
+                      ) : null}
 
                       <button
                         type="button"
@@ -1358,12 +1362,12 @@ function CreatePageClient() {
                             <Upload className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                             <div className="space-y-1">
                               <p className="text-sm font-medium text-foreground">Upload your setup clip</p>
-                              <p className="text-[11px] leading-relaxed text-muted-foreground">
-                                Post a real setup video instead of generating from the reference image. We infer the scene,
-                                bet options, and a location line from the clip (frames + any GPS/metadata in the file),
-                                trim to 20s max, check quality, and cut before an early on-screen resolution when
-                                possible. After you post, the same deep video analysis pipeline runs as for AI clips.
-                              </p>
+                              <ul className="list-disc space-y-1 pl-4 text-[11px] leading-relaxed text-muted-foreground">
+                                <li>Length 3–20 seconds.</li>
+                                <li>{selectedCharacter.name} as main character or POV</li>
+                                <li>Show 2+ clear possible outcomes</li>
+                                <li>Good camera and light so details are clear</li>
+                              </ul>
                             </div>
                           </div>
 
@@ -1650,7 +1654,8 @@ function CreatePageClient() {
               )}
 
               {/* Structured scene input */}
-              <div className="space-y-4">
+              {!isCharacterOwner ? (
+                <div className="space-y-4">
                 {mode === "character" && selectedCharacter ? (
                   <>
                     <CharacterFieldWithSuggestions
@@ -1840,7 +1845,8 @@ function CreatePageClient() {
                     </Select>
                   </div>
                 </div>
-              </div>
+                </div>
+              ) : null}
 
               {/* Progress */}
               {running && progress > 0 && (
@@ -1867,24 +1873,26 @@ function CreatePageClient() {
               )}
 
               {/* Generate button */}
-              <Button
-                className="w-full"
-                size="lg"
-                onClick={handleGenerate}
-                disabled={running || !hasSource || !actionText.trim()}
-              >
-                {running ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Generating...
-                  </>
-                ) : (
-                  <>
-                    <ImageIcon className="h-4 w-4" />
-                    Generate Clip
-                  </>
-                )}
-              </Button>
+              {!isCharacterOwner ? (
+                <Button
+                  className="w-full"
+                  size="lg"
+                  onClick={handleGenerate}
+                  disabled={running || !hasSource || !actionText.trim()}
+                >
+                  {running ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <ImageIcon className="h-4 w-4" />
+                      Generate Clip
+                    </>
+                  )}
+                </Button>
+              ) : null}
             </CardContent>
           </Card>
         </div>

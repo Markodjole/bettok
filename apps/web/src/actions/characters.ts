@@ -66,6 +66,10 @@ export async function getCharacters(): Promise<{
   characters: CharacterWithImages[];
   error?: string;
 }> {
+  const supabase = await createServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   const serviceClient = await createServiceClient();
 
   const { data, error } = await serviceClient
@@ -106,7 +110,15 @@ export async function getCharacters(): Promise<{
     })),
   );
 
-  return { characters: hydrated };
+  // Always show the signed-in user's characters first, then predefined/global ones.
+  const ordered = [...hydrated].sort((a, b) => {
+    const aMine = !!user && a.creator_user_id === user.id;
+    const bMine = !!user && b.creator_user_id === user.id;
+    if (aMine !== bMine) return aMine ? -1 : 1;
+    return a.sort_order - b.sort_order;
+  });
+
+  return { characters: ordered };
 }
 
 export async function getCharacterBySlug(slug: string): Promise<{

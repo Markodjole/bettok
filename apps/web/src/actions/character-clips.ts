@@ -1227,11 +1227,13 @@ const OWNER_SETUP_MIN_SHORTER_SIDE = 480;
 const OWNER_SETUP_MIN_BITRATE = 350_000;
 
 function mergeCaptureLocationText(containerHint: string | null, visionDescription: string): string | null {
+  const isGenericFallback = (s: string) =>
+    /indoor or undisclosed location/i.test(s.trim());
   const c = (containerHint || "").trim();
   const v = (visionDescription || "").trim();
-  if (c && v) return `${c} · ${v}`.slice(0, 320);
+  if (c && v && !isGenericFallback(v)) return `${c} · ${v}`.slice(0, 320);
   if (c) return c.slice(0, 320);
-  if (v) return v.slice(0, 320);
+  if (v && !isGenericFallback(v)) return v.slice(0, 320);
   return null;
 }
 
@@ -1807,6 +1809,14 @@ export async function publishCharacterDraft(input: {
       typeof llm.spoken_dialogue === "string" && llm.spoken_dialogue.trim()
         ? llm.spoken_dialogue.trim().slice(0, 500)
         : null;
+    const captureLocationText = [
+      llmRaw.capture_location_text,
+      llmRaw.locationDescription,
+      llmRaw.location_description,
+    ]
+      .map((v) => (typeof v === "string" ? v.trim() : ""))
+      .find((v) => v && !/indoor or undisclosed location/i.test(v))
+      ?.slice(0, 320) ?? null;
 
     const { data: clipNode, error: clipErr } = await serviceClient
       .from("clip_nodes")
@@ -1821,6 +1831,7 @@ export async function publishCharacterDraft(input: {
         first_frame_storage_path: input.imageStoragePath,
         llm_generation_json: llmStored,
         scene_summary: input.sceneSummary,
+        capture_location_text: captureLocationText,
         transcript,
         published_at: now,
         betting_deadline: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),

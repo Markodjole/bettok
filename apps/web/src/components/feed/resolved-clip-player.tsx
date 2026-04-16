@@ -232,7 +232,7 @@ export function ResolvedClipPlayer({ clip, isActive }: ResolvedClipPlayerProps) 
         <button
           type="button"
           onClick={handleReplay}
-          className="absolute bottom-28 left-1/2 z-30 -translate-x-1/2 flex items-center gap-2 rounded-full bg-white/15 backdrop-blur-sm px-5 py-2.5 text-white/90 hover:bg-white/25 transition-colors touch-manipulation"
+          className="absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 flex items-center gap-2 rounded-full bg-white/15 backdrop-blur-sm px-5 py-2.5 text-white/90 hover:bg-white/25 transition-colors touch-manipulation"
         >
           <RotateCcw className="h-5 w-5" />
           <span className="text-sm font-medium">Replay</span>

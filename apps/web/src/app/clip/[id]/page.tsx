@@ -142,6 +142,7 @@ export default function ClipDetailPage() {
             <VideoPlayer
               src={clip.video_storage_path as string}
               poster={clip.poster_storage_path as string}
+              subtitleText={(clip.transcript as string) ?? null}
               pauseStartMs={clip.pause_start_ms as number}
               isActive
             />
